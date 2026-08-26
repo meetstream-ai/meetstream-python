@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meetstream-sdk"
+version = "1.0.0"
+description = "Official MeetStream SDK for Python - send AI meeting bots into Zoom, Google Meet and Microsoft Teams. Record, transcribe, summarize and stream meetings, and run MIA voice agents."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "MeetStream.ai", email = "hello@meetstream.ai" }]
+keywords = ["meetstream", "meeting-bot", "meeting-bot-api", "zoom", "google-meet",
+            "microsoft-teams", "transcription", "live-transcription", "ai-notetaker",
+            "meeting-recording", "voice-agent", "mia", "webhooks", "sdk"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Communications :: Conferencing",
+]
+dependencies = ["httpx>=0.23,<1"]
+
+[project.urls]
+Homepage = "https://meetstream.ai"
+Documentation = "https://docs.meetstream.ai"
+Repository = "https://github.com/meetstream-ai/meetstream-python"
+Issues = "https://github.com/meetstream-ai/meetstream-python/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-asyncio>=0.21", "respx>=0.20"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/meetstream"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
