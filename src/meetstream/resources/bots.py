@@ -25,6 +25,13 @@ class Bots:
         Pass ``idempotency_key`` and a retry returns the original bot (HTTP 507)
         rather than creating a duplicate. Generate that UUID once, outside your
         retry loop, and persist it with the job.
+
+        Signed-in joins: pass ``"google_meet"`` or ``"teams"`` as
+        ``{"login_required": True, "google_login_domain" | "teams_login_domain": ...,
+        "sign_in_email"?: ..., "strict_email"?: bool}``. A signed-in Teams bot
+        uses the Microsoft account's own name and picture, so ``bot_name`` and
+        ``bot_image_url`` are not applied, and each Teams account runs one bot
+        at a time.
         """
         return self._t.post("/bots/create_bot", params, idempotency_key=idempotency_key, **kw)
 

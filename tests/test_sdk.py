@@ -209,6 +209,78 @@ def test_context_manager_closes():
         c.bots.list()
 
 
+# ------------------------------------------------------ signed-in logins ---
+
+def _req(call):
+    path = call.url.path
+    prefix = "/api/v1"
+    if path.startswith(prefix):
+        path = path[len(prefix):]
+    return (
+        call.method,
+        path,
+        dict(call.url.params),
+        json.loads(call.content) if call.content else None,
+    )
+
+
+def test_teams_logins_domain_methods():
+    client, calls = make_client({"body": {}})
+    client.teams_logins.create_domain({"domain": "bots.acme.com", "name": "Acme", "login_mode": "always"})
+    client.teams_logins.list_domains()
+    client.teams_logins.get_domain("bots.acme.com")
+    client.teams_logins.update_domain("bots.acme.com", {"name": "Renamed"})
+    client.teams_logins.delete_domain("bots.acme.com")
+    assert [_req(c) for c in calls] == [
+        ("POST", "/teams-login-domains", {}, {"domain": "bots.acme.com", "name": "Acme", "login_mode": "always"}),
+        ("GET", "/teams-login-domains", {}, None),
+        ("GET", "/teams-login-domains/bots.acme.com", {}, None),
+        ("PATCH", "/teams-login-domains/bots.acme.com", {}, {"name": "Renamed"}),
+        ("DELETE", "/teams-login-domains/bots.acme.com", {}, None),
+    ]
+
+
+def test_teams_logins_login_methods():
+    client, calls = make_client({"body": {}})
+    client.teams_logins.create({"domain": "bots.acme.com", "email": "bot1@bots.acme.com", "password": "placeholder"})
+    client.teams_logins.list("bots.acme.com")
+    client.teams_logins.get("login-1")
+    client.teams_logins.update("login-1", {"is_active": False})
+    client.teams_logins.delete("login-1")
+    assert [_req(c) for c in calls] == [
+        ("POST", "/teams-logins", {}, {"domain": "bots.acme.com", "email": "bot1@bots.acme.com", "password": "placeholder"}),
+        ("GET", "/teams-logins", {"domain": "bots.acme.com"}, None),
+        ("GET", "/teams-logins/login-1", {}, None),
+        ("PATCH", "/teams-logins/login-1", {}, {"is_active": False}),
+        ("DELETE", "/teams-logins/login-1", {}, None),
+    ]
+
+
+def test_teams_logins_list_requires_domain():
+    client, _ = make_client({"body": {}})
+    with pytest.raises(TypeError):
+        client.teams_logins.list()
+
+
+def test_google_logins_list_accepts_optional_domain():
+    client, calls = make_client({"body": {}})
+    client.google_logins.list()
+    client.google_logins.list("acme.com")
+    client.google_logins.list(domain="acme.com")
+    assert [(c.method, c.url.path.split("/api/v1")[-1], dict(c.url.params)) for c in calls] == [
+        ("GET", "/google-logins", {}),
+        ("GET", "/google-logins", {"domain": "acme.com"}),
+        ("GET", "/google-logins", {"domain": "acme.com"}),
+    ]
+
+
+def test_create_bot_passes_teams_block_through_unchanged():
+    client, calls = make_client({"status": 201, "body": {"bot_id": "b1"}})
+    teams = {"login_required": True, "teams_login_domain": "bots.acme.com", "sign_in_email": "bot1@bots.acme.com", "strict_email": False}
+    client.bots.create({"meeting_link": "https://teams.microsoft.com/l/meetup-join/x", "teams": teams})
+    assert json.loads(calls[0].content)["teams"] == teams
+
+
 # --------------------------------------------------------------- async ----
 
 async def test_async_client_works():
@@ -223,6 +295,41 @@ async def test_async_202_raises_not_ready():
     client, _ = make_async_client({"status": 202, "body": {}})
     with pytest.raises(NotReadyError):
         await client.transcripts.get("t1")
+    await client.aclose()
+
+
+async def test_async_teams_logins_all_methods():
+    client, calls = make_async_client({"body": {}})
+    t = client.teams_logins
+    await t.create_domain({"domain": "bots.acme.com"})
+    await t.list_domains()
+    await t.get_domain("bots.acme.com")
+    await t.update_domain("bots.acme.com", {"name": "Renamed"})
+    await t.delete_domain("bots.acme.com")
+    await t.create({"domain": "bots.acme.com", "email": "bot1@bots.acme.com", "password": "placeholder"})
+    await t.list("bots.acme.com")
+    await t.get("login-1")
+    await t.update("login-1", {"password": "placeholder-2"})
+    await t.delete("login-1")
+    assert [_req(c) for c in calls] == [
+        ("POST", "/teams-login-domains", {}, {"domain": "bots.acme.com"}),
+        ("GET", "/teams-login-domains", {}, None),
+        ("GET", "/teams-login-domains/bots.acme.com", {}, None),
+        ("PATCH", "/teams-login-domains/bots.acme.com", {}, {"name": "Renamed"}),
+        ("DELETE", "/teams-login-domains/bots.acme.com", {}, None),
+        ("POST", "/teams-logins", {}, {"domain": "bots.acme.com", "email": "bot1@bots.acme.com", "password": "placeholder"}),
+        ("GET", "/teams-logins", {"domain": "bots.acme.com"}, None),
+        ("GET", "/teams-logins/login-1", {}, None),
+        ("PATCH", "/teams-logins/login-1", {}, {"password": "placeholder-2"}),
+        ("DELETE", "/teams-logins/login-1", {}, None),
+    ]
+    await client.aclose()
+
+
+async def test_async_google_logins_list_domain():
+    client, calls = make_async_client({"body": {}})
+    await client.google_logins.list("acme.com")
+    assert dict(calls[0].url.params) == {"domain": "acme.com"}
     await client.aclose()
 
 

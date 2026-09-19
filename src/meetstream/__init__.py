@@ -49,6 +49,7 @@ from .resources import (
     AsyncGoogleLogins,
     AsyncMia,
     AsyncStorage,
+    AsyncTeamsLogins,
     AsyncTranscripts,
     AsyncZoom,
     Bots,
@@ -56,12 +57,13 @@ from .resources import (
     GoogleLogins,
     Mia,
     Storage,
+    TeamsLogins,
     Transcripts,
     Zoom,
 )
 from .webhooks import describe_stop, is_terminal, parse_webhook, stop_reason, verify_webhook_signature
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "MeetStream", "AsyncMeetStream", "__version__", "DEFAULT_BASE_URL",
@@ -102,6 +104,7 @@ class MeetStream:
         self.calendar = Calendar(self.http)
         self.mia = Mia(self.http)
         self.google_logins = GoogleLogins(self.http)
+        self.teams_logins = TeamsLogins(self.http)
         self.zoom = Zoom(self.http)
         self.storage = Storage(self.http)
 
@@ -141,6 +144,7 @@ class AsyncMeetStream:
         self.calendar = AsyncCalendar(self.http)
         self.mia = AsyncMia(self.http)
         self.google_logins = AsyncGoogleLogins(self.http)
+        self.teams_logins = AsyncTeamsLogins(self.http)
         self.zoom = AsyncZoom(self.http)
         self.storage = AsyncStorage(self.http)
 
