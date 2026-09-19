@@ -59,16 +59,16 @@ from .resources import (
     Transcripts,
     Zoom,
 )
-from .webhooks import describe_stop, is_terminal, parse_webhook, verify_webhook_signature
+from .webhooks import describe_stop, is_terminal, parse_webhook, stop_reason, verify_webhook_signature
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "MeetStream", "AsyncMeetStream", "__version__", "DEFAULT_BASE_URL",
     "MeetStreamError", "ConnectionError", "TimeoutError", "BadRequestError",
     "AuthenticationError", "PermissionError", "NotFoundError", "ConflictError",
     "RateLimitError", "ServerError", "NotReadyError",
-    "verify_webhook_signature", "parse_webhook", "is_terminal", "describe_stop",
+    "verify_webhook_signature", "parse_webhook", "is_terminal", "stop_reason", "describe_stop",
 ]
 
 

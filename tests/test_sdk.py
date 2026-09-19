@@ -25,6 +25,7 @@ from meetstream import (
     ServerError,
     describe_stop,
     is_terminal,
+    stop_reason,
     parse_webhook,
     verify_webhook_signature,
 )
@@ -228,7 +229,7 @@ async def test_async_202_raises_not_ready():
 # ------------------------------------------------------------- webhooks ---
 
 SECRET = "whsec_test"
-BODY = json.dumps({"event": "bot.stopped", "bot_id": "b1", "bot_status": "NotAllowed", "status_code": 200})
+BODY = json.dumps({"event": "bot.stopped", "bot_event": "bot.notallowed", "bot_id": "b1", "bot_status": "NotAllowed", "status_code": 500, "timestamp": "2026-06-16T06:28:14.445Z"})
 SIG = hmac.new(SECRET.encode(), BODY.encode(), hashlib.sha256).hexdigest()
 
 
@@ -257,8 +258,25 @@ def test_terminal_event_detection():
     assert is_terminal({"event": "bot.done"}) is False
 
 
-def test_describe_stop_explains_each_status():
-    assert "waiting room" in describe_stop({"event": "bot.stopped", "bot_status": "NotAllowed"})
-    assert "refused" in describe_stop({"event": "bot.stopped", "bot_status": "Denied"})
-    assert "crashed" in describe_stop({"event": "bot.stopped", "bot_status": "Error"})
-    assert "normally" in describe_stop({"event": "bot.stopped", "bot_status": "Stopped"})
+# Shapes taken from captured production webhooks (Jun 2026).
+def test_describe_stop_reads_bot_event():
+    assert "normally" in describe_stop({"event": "bot.stopped", "bot_event": "bot.stopped", "bot_status": "Stopped", "status_code": 200})
+    assert "removed" in describe_stop({"event": "bot.stopped", "bot_event": "bot.kicked", "bot_status": "Stopped", "status_code": 200})
+    assert "waiting room" in describe_stop({"event": "bot.stopped", "bot_event": "bot.notallowed", "bot_status": "NotAllowed", "status_code": 500})
+    assert "refused" in describe_stop({"event": "bot.stopped", "bot_event": "bot.denied", "bot_status": "Denied", "status_code": 500})
+    assert "crashed" in describe_stop({"event": "bot.stopped", "bot_event": "bot.failed", "bot_status": "FAILED", "status_code": 500})
+
+
+def test_stop_reason_falls_back_to_bot_status_case_insensitively():
+    assert stop_reason({"event": "bot.stopped", "bot_status": "NotAllowed"}) == "bot.notallowed"
+    assert stop_reason({"event": "bot.stopped", "bot_status": "Denied"}) == "bot.denied"
+    assert stop_reason({"event": "bot.stopped", "bot_status": "ERROR"}) == "bot.failed"
+    assert stop_reason({"event": "bot.stopped", "bot_status": "Failed"}) == "bot.failed"
+    assert stop_reason({"event": "bot.stopped", "bot_status": "Stopped"}) == "bot.stopped"
+
+
+def test_kick_is_distinguishable_from_clean_exit():
+    kick = {"event": "bot.stopped", "bot_event": "bot.kicked", "bot_status": "Stopped"}
+    clean = {"event": "bot.stopped", "bot_event": "bot.stopped", "bot_status": "Stopped"}
+    assert stop_reason(kick) != stop_reason(clean)
+

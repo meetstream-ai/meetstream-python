@@ -52,7 +52,14 @@ class GoogleLogins:
 
 
 class Zoom:
-    """Zoom OAuth, so bots can join on an end user's behalf."""
+    """Zoom OAuth connections.
+
+    .. deprecated:: 1.1.0
+        These ``/zoom/oauth/*`` endpoints were removed from the MeetStream API
+        reference. For authenticated Zoom joins, pass ``zoom={"zak_url": ...}``
+        or ``zoom={"obf_url": ...}`` to ``bots.create`` instead. Kept for
+        backwards compatibility.
+    """
 
     def __init__(self, transport: Any) -> None:
         self._t = transport
@@ -130,7 +137,7 @@ class AsyncGoogleLogins(GoogleLogins):
 
 
 class AsyncZoom(Zoom):
-    """Asynchronous Zoom OAuth operations."""
+    """Asynchronous Zoom OAuth operations. Deprecated, see :class:`Zoom`."""
 
     async def authorize_url(self, **kw: Any) -> Any:
         return await self._t.get("/zoom/oauth/authorize-url", **kw)

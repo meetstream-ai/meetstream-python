@@ -155,14 +155,15 @@ meetstream.bots.create({
 </details>
 
 <details>
-<summary><b>Integrations</b> - Google signed-in bots, Zoom OAuth, your own S3</summary>
+<summary><b>Integrations</b> - Google signed-in bots, authenticated Zoom joins, your own S3</summary>
 
 ```python
 meetstream.google_logins.create_domain({...})
 meetstream.google_logins.create({...})
 
-meetstream.zoom.authorize_url()
-meetstream.zoom.list_connections()
+# Authenticated Zoom joins: each URL is an HTTPS endpoint on your server that returns a fresh token
+meetstream.bots.create({"meeting_link": link, "bot_name": "Notetaker", "zoom": {"zak_url": "https://you.example.com/zoom/zak"}})
+meetstream.bots.create({"meeting_link": link, "bot_name": "Notetaker", "zoom": {"obf_url": "https://you.example.com/zoom/obf"}})
 
 meetstream.storage.set({"provider": "aws", "bucket_name": ..., "region": ...})
 ```
@@ -175,7 +176,7 @@ Verify before you trust. Pass the **raw** body - re-serializing a parsed dict ch
 
 ```python
 from flask import Flask, request
-from meetstream import parse_webhook, is_terminal, describe_stop
+from meetstream import parse_webhook, is_terminal, stop_reason, describe_stop
 
 app = Flask(__name__)
 
@@ -191,11 +192,11 @@ def webhook():
         return "", 401
 
     if is_terminal(event):
-        print(describe_stop(event))
+        print(stop_reason(event), describe_stop(event))
     return "", 200   # ack fast, process async
 ```
 
-**`bot.stopped` is the single terminal event** and always carries `status_code: 200` - the reason lives in `bot_status` (`Stopped`, `NotAllowed`, `Denied`, `Error`). `bot.error` is *not* terminal; the bot keeps running. Streaming-only providers stop at `audio.processed` and never emit `bot.done`.
+**Terminals are two-layer.** Every ending arrives once as `event: "bot.stopped"`, and `bot_event` says why: `bot.stopped`, `bot.kicked`, `bot.notallowed`, `bot.denied` or `bot.failed`. Not admitted, denied and failed carry `status_code: 500`. `stop_reason(event)` reads it for you (a kick and a clean exit both report `bot_status: "Stopped"`, so don't branch on that). `bot.error` is *not* terminal; the bot keeps running. `bot.done` is the final event on every path, streaming-only bots included. Every event carries a `timestamp`.
 
 ## Errors
 
@@ -255,6 +256,6 @@ The package ships `py.typed`, so mypy and pyright pick up its annotations with n
 
 ## Links
 
-[Documentation](https://docs.meetstream.ai) · [API reference](https://docs.meetstream.ai/api-reference/introduction) · [Errors](https://docs.meetstream.ai/errors) · [Webhooks](https://docs.meetstream.ai/guides/webhooks/webhooks-and-events) · [MIA](https://docs.meetstream.ai/guides/mia/create-mia) · [support@meetstream.ai](mailto:support@meetstream.ai)
+[Documentation](https://docs.meetstream.ai) · [API reference](https://docs.meetstream.ai/api-reference/introduction) · [Errors](https://docs.meetstream.ai/errors) · [Webhooks](https://docs.meetstream.ai/guides/webhooks/webhooks-and-events) · [MIA](https://docs.meetstream.ai/guides/mia/create-an-agent) · [support@meetstream.ai](mailto:support@meetstream.ai)
 
 MIT licensed.

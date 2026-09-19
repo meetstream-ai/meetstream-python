@@ -6,7 +6,7 @@ import hmac
 import json
 from typing import Any, Dict, Union
 
-__all__ = ["verify_webhook_signature", "parse_webhook", "is_terminal", "describe_stop"]
+__all__ = ["verify_webhook_signature", "parse_webhook", "is_terminal", "stop_reason", "describe_stop"]
 
 
 def verify_webhook_signature(payload: Union[str, bytes], signature: str, secret: str) -> bool:
@@ -41,24 +41,48 @@ def parse_webhook(payload: Union[str, bytes], signature: str, secret: str) -> Di
 
 
 def is_terminal(event: Dict[str, Any]) -> bool:
-    """True when this event ends the bot's meeting lifecycle.
+    """True when this event ends the bot's time in the meeting.
 
-    ``bot.stopped`` is the single terminal event and always carries
-    ``status_code: 200``, whatever the reason - read ``bot_status`` to find out
-    why. ``bot.error`` is deliberately not terminal: the bot keeps running.
+    Every ending arrives once as ``event: "bot.stopped"``, whatever the reason;
+    :func:`stop_reason` tells you why. Post-call processing continues
+    afterwards and ``bot.done`` is the final event. ``bot.error`` is
+    deliberately not terminal: the bot keeps running.
     """
     return event.get("event") == "bot.stopped"
 
 
+def stop_reason(event: Dict[str, Any]) -> str:
+    """The specific reason a bot stopped.
+
+    One of ``bot.stopped``, ``bot.kicked``, ``bot.notallowed``, ``bot.denied``
+    or ``bot.failed``. Reads ``bot_event`` and falls back to ``bot_status``
+    (case-insensitively) for payloads without it. ``bot_status`` alone cannot
+    tell a kick from a clean exit: both are ``Stopped``.
+    """
+    reason = event.get("bot_event")
+    if isinstance(reason, str) and reason:
+        return reason
+    status = str(event.get("bot_status") or "").lower()
+    if status == "notallowed":
+        return "bot.notallowed"
+    if status == "denied":
+        return "bot.denied"
+    if status in ("error", "failed"):
+        return "bot.failed"
+    return "bot.stopped"
+
+
 def describe_stop(event: Dict[str, Any]) -> str:
     """Human-readable explanation of why a bot stopped."""
-    status = event.get("bot_status")
-    if status == "Stopped":
+    reason = stop_reason(event)
+    if reason == "bot.stopped":
         return "The bot left normally."
-    if status == "NotAllowed":
+    if reason == "bot.kicked":
+        return "A participant removed the bot from the meeting."
+    if reason == "bot.notallowed":
         return "The bot sat in the waiting room until it timed out. Nobody admitted it."
-    if status == "Denied":
+    if reason == "bot.denied":
         return "A host actively refused the bot. This is a human decision; do not auto-retry."
-    if status == "Error":
+    if reason == "bot.failed":
         return "The bot session crashed. Create a fresh bot."
-    return event.get("message") or "Bot stopped with status {}.".format(status or "unknown")
+    return event.get("message") or "Bot stopped ({}).".format(reason)

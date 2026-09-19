@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meetstream-sdk"
-version = "1.0.0"
+version = "1.1.0"
 description = "Official MeetStream SDK for Python - send AI meeting bots into Zoom, Google Meet and Microsoft Teams. Record, transcribe, summarize and stream meetings, and run MIA voice agents."
 readme = "README.md"
 requires-python = ">=3.8"
