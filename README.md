@@ -170,6 +170,7 @@ meetstream.teams_logins.create({
 })
 meetstream.bots.create({
     "meeting_link": "https://teams.microsoft.com/l/meetup-join/...",
+    "bot_name": "Notetaker",  # required, though the Microsoft account's own name is shown
     "teams": {"login_required": True, "teams_login_domain": "bots.acme.com"},
 })
 
