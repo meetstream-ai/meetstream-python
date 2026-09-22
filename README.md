@@ -28,8 +28,10 @@ meetstream = MeetStream()  # reads MEETSTREAM_API_KEY
 bot = meetstream.bots.create({
     "meeting_link": "https://meet.google.com/abc-defg-hij",
     "bot_name": "Notetaker",
+    "video_required": False,  # audio only unless video was asked for; the API defaults to True
     "recording_config": {
         "transcript": {"provider": {"deepgram": {"model": "nova-3", "language": "en"}}}
+        # Recording video? Add "video_layout": "speaker_view" (the API defaults to grid_view).
     },
 })
 

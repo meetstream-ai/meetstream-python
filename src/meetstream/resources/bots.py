@@ -32,6 +32,16 @@ class Bots:
         uses the Microsoft account's own name and picture, so ``bot_name`` and
         ``bot_image_url`` are not applied, and each Teams account runs one bot
         at a time.
+
+        Recording defaults: the API sets ``video_required`` to ``True`` when it is
+        omitted, so pass ``False`` explicitly unless video was asked for
+        (transcripts, summaries, diarization and speaker timelines all work from
+        audio alone). When you do record video, set
+        ``{"recording_config": {"video_layout": "speaker_view"}}``: the API
+        defaults that to ``"grid_view"``, and speaker view follows the active
+        speaker. ``video_layout`` is ignored for audio-only bots and is supported
+        on Google Meet, Teams and Zoom. Leave ``video_separate_streams`` unset
+        unless per-participant video was explicitly requested.
         """
         return self._t.post("/bots/create_bot", params, idempotency_key=idempotency_key, **kw)
 

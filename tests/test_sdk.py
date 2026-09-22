@@ -387,3 +387,20 @@ def test_kick_is_distinguishable_from_clean_exit():
     clean = {"event": "bot.stopped", "bot_event": "bot.stopped", "bot_status": "Stopped"}
     assert stop_reason(kick) != stop_reason(clean)
 
+
+
+# Policy: audio only unless asked, speaker view when video is on, per-participant video opt-in.
+def test_create_bot_passes_video_policy_fields_through():
+    client, calls = make_client({"status": 201, "body": {"bot_id": "b1"}})
+    client.bots.create(
+        {
+            "meeting_link": "https://meet.google.com/x",
+            "bot_name": "Notetaker",
+            "video_required": True,
+            "recording_config": {"video_layout": "speaker_view"},
+        }
+    )
+    sent = json.loads(calls[0].content)
+    assert sent["video_required"] is True
+    assert sent["recording_config"]["video_layout"] == "speaker_view"
+    assert "video_separate_streams" not in sent

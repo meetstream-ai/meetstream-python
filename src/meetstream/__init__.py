@@ -63,7 +63,7 @@ from .resources import (
 )
 from .webhooks import describe_stop, is_terminal, parse_webhook, stop_reason, verify_webhook_signature
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 __all__ = [
     "MeetStream", "AsyncMeetStream", "__version__", "DEFAULT_BASE_URL",
