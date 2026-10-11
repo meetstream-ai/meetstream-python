@@ -266,7 +266,7 @@ The package ships `py.typed`, so mypy and pyright pick up its annotations with n
 
 | | What | Where |
 |:--:|---|---|
-| 🔌 | **MCP server** - 19 tools for any MCP client | [`@meetstream/mcp`](https://www.npmjs.com/package/@meetstream/mcp) |
+| 🔌 | **MCP server** - 19 tools for any MCP client, hosted: add the URL and sign in | [`https://mcp.meetstream.ai/mcp`](https://docs.meetstream.ai/build-with-ai/meetstream-mcp-server) |
 | 📦 | **TypeScript SDK** | [`@meetstream/sdk`](https://www.npmjs.com/package/@meetstream/sdk) |
 | ⌨️ | **CLI** | [`@meetstream/cli`](https://www.npmjs.com/package/@meetstream/cli) |
 | 🧪 | **Labs** - runnable templates | [labs](https://github.com/meetstream-ai/labs) |
