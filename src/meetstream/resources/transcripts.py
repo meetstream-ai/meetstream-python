@@ -31,9 +31,18 @@ class Transcripts:
         Segments use a ``transcript`` field, not ``text``. Reading the wrong
         field is the usual reason a transcript "looks empty".
 
-        Raises :class:`NotReadyError` on HTTP 202.
+        Raises :class:`NotReadyError` on HTTP 202. Handle a 422 and a 500 the
+        same way: the transcript failed and will not become ready.
         """
         return self._t.get(f"/transcript/{_p(transcript_id)}/get_transcript", params={"raw": raw}, **kw)
+
+    def get_by_bot(self, bot_id: str, *, raw: bool = False, **kw: Any) -> Any:
+        """Fetch the bot's first transcript by **bot_id**, with no transcript_id lookup.
+
+        Same response and errors as :meth:`get`. 409 means no transcript exists
+        (transcription was off, or the bot was never admitted).
+        """
+        return self._t.get(f"/bots/{_p(bot_id)}/get_transcript", params={"raw": raw}, **kw)
 
     def list_for_bot(self, bot_id: str, **kw: Any) -> Any:
         return self._t.get(f"/bots/{_p(bot_id)}/transcriptions", **kw)
@@ -70,6 +79,9 @@ class AsyncTranscripts(Transcripts):
 
     async def get(self, transcript_id: str, *, raw: bool = False, **kw: Any) -> Any:
         return await self._t.get(f"/transcript/{_p(transcript_id)}/get_transcript", params={"raw": raw}, **kw)
+
+    async def get_by_bot(self, bot_id: str, *, raw: bool = False, **kw: Any) -> Any:
+        return await self._t.get(f"/bots/{_p(bot_id)}/get_transcript", params={"raw": raw}, **kw)
 
     async def list_for_bot(self, bot_id: str, **kw: Any) -> Any:
         return await self._t.get(f"/bots/{_p(bot_id)}/transcriptions", **kw)

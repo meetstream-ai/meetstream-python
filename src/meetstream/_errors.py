@@ -1,11 +1,12 @@
 """Errors raised by the MeetStream SDK.
 
-Every MeetStream error response carries a ``message`` field; it becomes
-``error.message`` and the raw body is kept on ``error.body``.
+MeetStream error responses carry a ``message`` field; it becomes
+``error.message`` and the raw body is kept on ``error.body``. Older responses
+used an ``error`` key or a bare JSON string instead, and both are still read.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 __all__ = [
     "MeetStreamError", "ConnectionError", "TimeoutError", "BadRequestError",
@@ -24,12 +25,27 @@ class MeetStreamError(Exception):
         status: Optional[int] = None,
         body: Any = None,
         request_id: Optional[str] = None,
+        retry_after: Optional[float] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.status = status
         self.body = body
         self.request_id = request_id
+        #: Seconds from the ``Retry-After`` header (or the body's ``retry_after``), when sent.
+        self.retry_after = retry_after
+
+    @property
+    def code(self) -> Optional[str]:
+        """The machine-readable ``code`` from the error body, when the API sent one.
+
+        For example ``unsupported_on_whatsapp`` or ``unsupported_on_zoom_rtms``.
+        """
+        if isinstance(self.body, dict):
+            value = self.body.get("code")
+            if isinstance(value, str) and value:
+                return value
+        return None
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         if self.status is not None:
@@ -62,15 +78,22 @@ class NotFoundError(MeetStreamError):
 
 
 class ConflictError(MeetStreamError):
-    """409 - deduplication conflict: same ``deduplication_key``, different meeting."""
+    """409 - the request conflicts with the current state.
+
+    Examples: the same ``deduplication_key`` with a different meeting, or a
+    command sent to a bot that is not in the meeting. When ``retry_after`` is
+    set, another request with the same idempotency or deduplication key is
+    still being saved: retry with the **same** key after that many seconds.
+    """
 
 
 class RateLimitError(MeetStreamError):
-    """429 - rate limited. ``retry_after`` is in seconds when the API supplied it."""
+    """429 - rate limited. ``retry_after`` is in seconds when the API supplied it.
 
-    def __init__(self, message: str, *, retry_after: Optional[float] = None, **kwargs: Any) -> None:
-        super().__init__(message, **kwargs)
-        self.retry_after = retry_after
+    Prepaid accounts are limited to a number of bot creates per minute and per
+    hour; the body then also carries ``limit`` and ``window`` (``"minute"`` or
+    ``"hour"``). No bot is created by a 429.
+    """
 
 
 class ServerError(MeetStreamError):
@@ -98,7 +121,7 @@ def error_for_status(
     retry_after: Optional[float] = None,
 ) -> MeetStreamError:
     """Map an HTTP status onto the right error class."""
-    kwargs = {"status": status, "body": body, "request_id": request_id}
+    kwargs: Dict[str, Any] = {"status": status, "body": body, "request_id": request_id, "retry_after": retry_after}
     if status == 202:
         return NotReadyError(message, **kwargs)
     if status == 400:
@@ -112,7 +135,7 @@ def error_for_status(
     if status == 409:
         return ConflictError(message, **kwargs)
     if status == 429:
-        return RateLimitError(message, retry_after=retry_after, **kwargs)
+        return RateLimitError(message, **kwargs)
     if status >= 500:
         return ServerError(message, **kwargs)
     return MeetStreamError(message, **kwargs)

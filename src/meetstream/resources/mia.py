@@ -4,7 +4,17 @@ AI participants that listen and speak in a live meeting. MeetStream hosts the
 audio bridge, so you host nothing.
 
 Flow: create a config here, then pass the returned ``agent_config_id`` to
-``bots.create()``. That single field is all a MIA bot needs.
+``bots.create()``. That single field is all a MIA bot needs. To change a
+running agent mid-call, use ``bots.update_mia()``.
+
+LLM providers for ``model.provider`` include ``openai`` and ``anthropic``
+(Claude, pipeline mode; save your Anthropic key in the dashboard). See
+:class:`meetstream.types.MiaModelConfig`.
+
+Secrets come back masked: header values in ``mcp_servers`` and
+``custom_functions`` and ``api_key``-like fields read as ``****`` plus the last
+four characters. Sending a masked value back in :meth:`Mia.update` keeps the
+stored secret.
 """
 from __future__ import annotations
 

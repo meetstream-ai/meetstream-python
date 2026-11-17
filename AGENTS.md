@@ -98,6 +98,7 @@ Tests need **no API key and no network**: every request is served by an `httpx.M
 | `src/meetstream/_client.py` | sync and async transports: auth, retries, status handling |
 | `src/meetstream/_errors.py` | error hierarchy and the status -> class mapping |
 | `src/meetstream/webhooks.py` | signature verification and lifecycle helpers |
+| `src/meetstream/types.py` | optional `TypedDict`s and `Literal`s for request and response shapes |
 | `src/meetstream/resources/*.py` | one namespace per API area, sync class + `Async` subclass |
 | `src/meetstream/py.typed` | marks the package as typed |
 
@@ -108,6 +109,7 @@ Tests need **no API key and no network**: every request is served by an `httpx.M
 - Keep 3.8 compatibility: `from __future__ import annotations`, and `Optional[X]` rather than `X | None` at runtime.
 - Field names mirror the wire format. Never rename for aesthetics.
 - Every new method needs a test. The suite is the spec.
+- Check new paths against the live spec (https://docs.meetstream.ai/openapi.json). `bots.summary()`, `calendar.toggle_recurrence()` and `storage.*` call routes the API does not serve: they are deprecated (they warn), not removed.
 - Keep `py.typed` shipped - it is what makes the annotations visible to mypy and pyright.
 
 ### The status-code handling is deliberate
@@ -136,9 +138,16 @@ These are live-verified. Do not "fix" code that follows them.
 - The bot field is **`meeting_link`**, not `meeting_url`.
 - `in_call_recording_timeout` has a hard floor of **600 seconds**; below it the API returns 400.
 - MIA bots take **only `agent_config_id`**. Adding `socket_connection_url` or `live_audio_required` alongside it is the usual cause of a silent agent.
-- **Video is off by default.** Send `"video_required": false` on every bot unless the user explicitly asks to record video. The API defaults it to `true`, so an omitted field records video, and transcripts, summaries, diarization and speaker timelines all work without it.
-- **When video is on, send a layout.** `recording_config.video_layout` accepts exactly `"speaker_view"` or `"grid_view"` and defaults to `"grid_view"`, so pass `"speaker_view"` explicitly unless the user asks for grid or gallery view. It is ignored when video is off; Google Meet, Teams and Zoom accept both values, and WhatsApp accepts only `"grid_view"`.
+- **Video is off by default.** `video_required` defaults to `false` (audio only). Keep it `false` unless the user explicitly asks to record video: transcripts, diarization and speaker timelines all work without it.
+- **When video is on, send a layout.** `recording_config.video_layout` defaults to `"grid_view"`, so pass `"speaker_view"` explicitly unless the user asks for grid or gallery view. It is ignored when video is off. Google Meet, Teams and Zoom accept `"speaker_view"` and `"grid_view"`; Google Meet and Teams also accept `"speaker_view_default"` and `"grid_view_default"`; WhatsApp accepts only `"grid_view"`.
 - **Per-participant video is opt-in only.** Never set `video_separate_streams` (top level or under `recording_config`) unless the user explicitly asks for per-participant video streams. Per-participant audio (`audio_separate_streams`) is unaffected.
+- **Zoom needs no setup.** With no Zoom app connected, a Zoom bot joins without one. `zoom.use_own_app: true` requires the connected app; `false` never uses it and cannot be combined with `zak_url` or `obf_url`. Do not send any other `zoom` key.
+- **`remove_bot` answers `202` while the stop is in progress.** `bots.remove()` returns that body instead of raising; follow with `bots.stop_status()`.
+- **`get_speaker_timeline` can return a download link** (`speaker_timeline_url`, valid one hour, no API key) instead of the timeline. Check for the key, or use `speaker_timeline(bot_id, download=True)`.
+- **Bot creates can be rate limited (429 with `Retry-After`).** Retry with the same `Idempotency-Key`. A `409` with `Retry-After` means the same key is still being saved: retry it too.
+- **Errors carry `message`.** Older bodies used `error` or a bare string; `_message_from` reads all three in that order.
+- **Raised hands:** `bots.raise_hand()` / `bots.lower_hand()` send `send_command`; `participant_events.raise_hand` / `lower_hand` reach only realtime endpoints that list them.
+- **Anthropic Claude is a MIA LLM provider** (`model.provider: "anthropic"`), not a transcription provider.
 ## Security
 
 - Never hard-code or commit a key. `ms_...` values belong in the environment.

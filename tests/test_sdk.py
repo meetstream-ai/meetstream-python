@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from meetstream import (
+    PARTICIPANT_HAND_EVENTS,
     AsyncMeetStream,
     AuthenticationError,
     BadRequestError,
@@ -24,6 +25,7 @@ from meetstream import (
     RateLimitError,
     ServerError,
     describe_stop,
+    hand_event,
     is_terminal,
     stop_reason,
     parse_webhook,
@@ -56,7 +58,7 @@ def make_async_client(responses, **kwargs):
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         spec = queue.pop(0) if len(queue) > 1 else queue[0]
-        return httpx.Response(spec.get("status", 200), json=spec.get("body", {}))
+        return httpx.Response(spec.get("status", 200), json=spec.get("body", {}), headers=spec.get("headers", {}))
 
     transport = httpx.MockTransport(handler)
     kwargs.setdefault("max_retries", 0)
@@ -182,7 +184,8 @@ def test_reschedule_uses_scheduled_join_time():
 
 def test_storage_set_targets_admin_configs():
     client, calls = make_client({"body": {}})
-    client.storage.set({"provider": "aws", "bucket_name": "b"})
+    with pytest.warns(DeprecationWarning, match="storage_id"):
+        client.storage.set({"provider": "aws", "bucket_name": "b"})
     assert calls[0].method == "PUT"
     assert calls[0].url.params["config_type"] == "storage"
 
@@ -404,3 +407,390 @@ def test_create_bot_passes_video_policy_fields_through():
     assert sent["video_required"] is True
     assert sent["recording_config"]["video_layout"] == "speaker_view"
     assert "video_separate_streams" not in sent
+
+
+# ------------------------------------------------------ API coverage ---
+
+def test_send_command_raise_and_lower_hand():
+    client, calls = make_client({"body": {"status": "accepted", "bot_id": "b1", "command": "raise_hand", "hand_raised": True}})
+    out = client.bots.raise_hand("b1")
+    client.bots.lower_hand("b1")
+    client.bots.send_command("b1", "screenshot")
+    client.bots.send_command("b1", "sendmsg", {"message": "hi"})
+    assert out["hand_raised"] is True
+    assert [_req(c) for c in calls] == [
+        ("POST", "/bots/b1/send_command", {}, {"command": "raise_hand"}),
+        ("POST", "/bots/b1/send_command", {}, {"command": "lower_hand"}),
+        ("POST", "/bots/b1/send_command", {}, {"command": "screenshot"}),
+        ("POST", "/bots/b1/send_command", {}, {"message": "hi", "command": "sendmsg"}),
+    ]
+
+
+def test_hand_command_unsupported_platform_exposes_code():
+    client, _ = make_client({"status": 400, "body": {"message": "Not supported on WhatsApp.", "code": "unsupported_on_whatsapp"}})
+    with pytest.raises(BadRequestError) as info:
+        client.bots.raise_hand("b1")
+    assert info.value.code == "unsupported_on_whatsapp"
+    assert info.value.message == "Not supported on WhatsApp."
+
+
+def test_hand_command_bot_not_in_meeting_is_conflict_and_not_retried():
+    client, calls = make_client({"status": 409, "body": {"message": "Bot is not in the meeting"}}, max_retries=3)
+    with pytest.raises(ConflictError):
+        client.bots.raise_hand("b1")
+    assert len(calls) == 1
+
+
+def test_update_mia_with_and_without_wait_for_ack():
+    client, calls = make_client({"body": {"status": "applied", "bot_id": "b1", "command": "update_mia", "applied": ["system_prompt"]}})
+    out = client.bots.update_mia("b1", {"system_prompt": "Be brief."}, wait_for_ack=True)
+    client.bots.update_mia("b1", {"wake_words": ["hey acme"]})
+    assert out["status"] == "applied"
+    assert [_req(c) for c in calls] == [
+        ("POST", "/bots/b1/update_mia", {}, {"system_prompt": "Be brief.", "wait_for_ack": True}),
+        ("POST", "/bots/b1/update_mia", {}, {"wake_words": ["hey acme"]}),
+    ]
+
+
+def test_get_bot_stop_status_and_get_transcript_by_bot():
+    client, calls = make_client({"body": {}})
+    client.bots.get("b1")
+    client.bots.stop_status("b1")
+    client.transcripts.get_by_bot("b1")
+    client.transcripts.get_by_bot("b1", raw=True)
+    assert [_req(c) for c in calls] == [
+        ("GET", "/bots/b1", {}, None),
+        ("GET", "/bots/b1/stop_status", {}, None),
+        ("GET", "/bots/b1/get_transcript", {"raw": "false"}, None),
+        ("GET", "/bots/b1/get_transcript", {"raw": "true"}, None),
+    ]
+
+
+def test_remove_returns_202_stop_in_progress_instead_of_raising():
+    body = {"bot_id": "b1", "status": "graceful_exit_in_progress", "bot_status": "InMeeting"}
+    client, calls = make_client({"status": 202, "body": body})
+    assert client.bots.remove("b1") == body
+    assert client.bots.stop_status("b1") == body
+    assert calls[0].method == "GET" and calls[0].url.path.endswith("/bots/b1/remove_bot")
+
+
+def test_screenshots_use_the_live_route_and_pass_paging_params():
+    client, calls = make_client({"body": {"screenshots": []}})
+    client.bots.screenshots("b1")
+    client.bots.screenshots("b1", limit=10, continuation_token="tok", meta="m", action="prev")
+    client.bots.screenshot("b1", "20261101T101010000Z_abc")
+    assert [_req(c) for c in calls] == [
+        ("GET", "/bots/b1/screenshots", {}, None),
+        ("GET", "/bots/b1/screenshots", {"limit": "10", "continuation_token": "tok", "action": "prev", "meta": "m"}, None),
+        ("GET", "/bots/b1/screenshots/20261101T101010000Z_abc", {}, None),
+    ]
+
+
+def test_summary_is_deprecated():
+    client, calls = make_client({"body": {}})
+    with pytest.warns(DeprecationWarning, match="no summary endpoint"):
+        client.bots.summary("b1")
+    assert calls[0].url.path.endswith("/bots/b1/summary")
+
+
+def _timeline_client(api_body, file_body):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if request.url.host == "files.example.com":
+            return httpx.Response(200, json=file_body)
+        return httpx.Response(200, json=api_body)
+
+    client = MeetStream("ms_test", max_retries=0, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    return client, calls
+
+
+TIMELINE_URL = {
+    "bot_id": "b1",
+    "speaker_timeline_url": "https://files.example.com/t.json?X-Amz-Signature=abc",
+    "size_bytes": 8421337,
+    "truncated": False,
+}
+
+
+def test_speaker_timeline_returns_download_shape_unless_asked_to_download():
+    client, calls = _timeline_client(TIMELINE_URL, [{"name": "Sid"}])
+    assert client.bots.speaker_timeline("b1") == TIMELINE_URL
+    assert len(calls) == 1
+
+
+def test_speaker_timeline_download_fetches_without_the_api_key():
+    client, calls = _timeline_client(TIMELINE_URL, [{"name": "Sid"}])
+    assert client.bots.speaker_timeline("b1", download=True) == [{"name": "Sid"}]
+    assert calls[1].url.host == "files.example.com"
+    assert "authorization" not in calls[1].headers
+
+
+def test_speaker_timeline_download_leaves_inline_body_alone():
+    client, calls = _timeline_client([{"name": "Sid"}], None)
+    assert client.bots.speaker_timeline("b1", download=True) == [{"name": "Sid"}]
+    assert len(calls) == 1
+
+
+def test_speaker_timeline_download_refuses_non_https_url():
+    client, _ = _timeline_client(dict(TIMELINE_URL, speaker_timeline_url="http://files.example.com/t.json"), None)
+    with pytest.raises(MeetStreamError):
+        client.bots.speaker_timeline("b1", download=True)
+
+
+def test_calendar_routes_match_the_api():
+    client, calls = make_client({"body": {}})
+    client.calendar.list()
+    client.calendar.list(provider="google", account_id="a@acme.com")
+    client.calendar.disconnect()
+    client.calendar.disconnect({"provider": "google", "account_id": "a@acme.com", "purge_events": False})
+    client.calendar.list_connections(limit=10, cursor="c1")
+    client.calendar.get_connection("google", "a@acme.com")
+    client.calendar.delete_connection("outlook", "b@acme.com", purge_events=False)
+    assert [_req(c) for c in calls] == [
+        ("GET", "/calendar/calendars", {}, None),
+        ("GET", "/calendar/calendars", {"provider": "google", "account_id": "a@acme.com"}, None),
+        ("DELETE", "/calendar/disconnect", {}, None),
+        ("DELETE", "/calendar/disconnect", {"provider": "google", "account_id": "a@acme.com", "purge_events": "false"}, None),
+        ("GET", "/calendar/connections", {"limit": "10", "cursor": "c1"}, None),
+        ("GET", "/calendar/connections/google/a@acme.com", {}, None),
+        ("DELETE", "/calendar/connections/outlook/b@acme.com", {"purge_events": "false"}, None),
+    ]
+    assert calls[5].url.raw_path.endswith(b"/calendar/connections/google/a%40acme.com")
+
+
+def test_toggle_recurrence_is_deprecated():
+    client, _ = make_client({"body": {}})
+    with pytest.warns(DeprecationWarning):
+        client.calendar.toggle_recurrence()
+
+
+def test_google_logins_get():
+    client, calls = make_client({"body": {}})
+    client.google_logins.get("login-1")
+    assert _req(calls[0]) == ("GET", "/google-logins/login-1", {}, None)
+
+
+def test_meeting_direct_connect_routes():
+    client, calls = make_client({"body": {}})
+    rtms = {"zoom_rtms": {"meeting_uuid": "u", "rtms_stream_id": "s", "server_urls": "wss://x.zoom.us", "signature": "f" * 64}}
+    client.meeting_direct_connect.create(rtms)
+    client.meeting_direct_connect.get("b1")
+    client.meeting_direct_connect.leave("b1")
+    assert [_req(c) for c in calls] == [
+        ("POST", "/meeting_direct_connect", {}, rtms),
+        ("GET", "/meeting_direct_connect/b1", {}, None),
+        ("POST", "/meeting_direct_connect/b1/leave", {}, {}),
+    ]
+
+
+def test_create_bot_passes_new_fields_through_unchanged():
+    from meetstream.types import CreateBotParams
+
+    params: CreateBotParams = {
+        "meeting_link": "https://zoom.us/j/1",
+        "zoom": {"use_own_app": False},
+        "storage_id": "eu-bucket_1",
+        "bot_camera_stream": {"websocket_url": "wss://cam.example.com/signal"},
+        "automatic_leave": {"recording_permission_denied_timeout": 600},
+        "recording_config": {
+            "video_layout": "speaker_view_default",
+            "transcript": {"provider": {"smallest": {"model": "pulse", "language": "en", "diarize": True}}},
+            "realtime_endpoints": [
+                {"type": "webhook", "url": "https://you.example.com/rt", "events": list(PARTICIPANT_HAND_EVENTS)}
+            ],
+        },
+    }
+    client, calls = make_client({"status": 201, "body": {"bot_id": "b1"}})
+    client.bots.create(params)
+    assert json.loads(calls[0].content) == params
+
+
+def test_mia_create_with_anthropic_provider():
+    client, calls = make_client({"body": {"agent_config_id": "agent-1"}})
+    model = {"provider": "anthropic", "model": "claude-sonnet-5-5", "reasoning_effort": "low", "tool_choice": "auto"}
+    client.mia.create({"agent_name": "Claude", "mode": "pipeline", "model": model})
+    assert json.loads(calls[0].content)["model"] == model
+
+
+# ---------------------------------------------------- errors and retries ---
+
+def test_rate_limit_surfaces_retry_after_and_body():
+    body = {"error": "rate_limit_exceeded", "message": "Too many bots", "limit": 5, "window": "minute", "retry_after": 37}
+    client, _ = make_client({"status": 429, "body": body, "headers": {"Retry-After": "37"}})
+    with pytest.raises(RateLimitError) as info:
+        client.bots.create({"meeting_link": "x"})
+    assert info.value.retry_after == 37.0
+    assert info.value.message == "Too many bots"
+    assert info.value.body["window"] == "minute"
+
+
+def test_retry_after_falls_back_to_body_when_header_missing():
+    client, _ = make_client({"status": 429, "body": {"message": "slow down", "retry_after": 12}})
+    with pytest.raises(RateLimitError) as info:
+        client.bots.status("b1")
+    assert info.value.retry_after == 12.0
+
+
+def test_429_retry_honours_retry_after(monkeypatch):
+    slept = []
+    monkeypatch.setattr("meetstream._client.time.sleep", slept.append)
+    client, calls = make_client(
+        [{"status": 429, "body": {"message": "slow"}, "headers": {"Retry-After": "3"}}, {"body": {"ok": True}}],
+        max_retries=2,
+    )
+    assert client.bots.status("b1")["ok"] is True
+    assert slept == [3.0] and len(calls) == 2
+
+
+def test_long_retry_after_is_raised_not_slept(monkeypatch):
+    slept = []
+    monkeypatch.setattr("meetstream._client.time.sleep", slept.append)
+    client, calls = make_client({"status": 429, "body": {"message": "hourly"}, "headers": {"Retry-After": "1800"}}, max_retries=3)
+    with pytest.raises(RateLimitError) as info:
+        client.bots.create({"meeting_link": "x"})
+    assert info.value.retry_after == 1800.0
+    assert slept == [] and len(calls) == 1
+
+
+def test_409_with_retry_after_is_retried_with_the_same_idempotency_key(monkeypatch):
+    slept = []
+    monkeypatch.setattr("meetstream._client.time.sleep", slept.append)
+    client, calls = make_client(
+        [{"status": 409, "body": {"message": "in progress"}, "headers": {"Retry-After": "2"}}, {"status": 507, "body": {"bot_id": "orig"}}],
+        max_retries=2,
+    )
+    bot = client.bots.create({"meeting_link": "x"}, idempotency_key="k-1")
+    assert bot["bot_id"] == "orig"
+    assert slept == [2.0]
+    assert [c.headers["idempotency-key"] for c in calls] == ["k-1", "k-1"]
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ({"message": "Manifest file not found."}, "Manifest file not found."),
+        ({"error": "Bot not found"}, "Bot not found"),
+        ({"error": "Invalid JSON body", "detail": "Expecting value"}, "Invalid JSON body"),
+        ("Bot not found.", "Bot not found."),
+        ({}, "MeetStream API returned HTTP 404"),
+    ],
+)
+def test_error_message_reads_message_then_error_then_bare_string(body, expected):
+    client, _ = make_client({"status": 404, "body": body})
+    with pytest.raises(NotFoundError) as info:
+        client.bots.audio("b1")
+    assert info.value.message == expected
+    assert info.value.code is None
+
+
+# ------------------------------------------------------------ webhooks ---
+
+def test_hand_event_helper():
+    assert hand_event({"event": "participant_events.raise_hand"}) == "raise_hand"
+    assert hand_event({"event": "participant_events.lower_hand"}) == "lower_hand"
+    assert hand_event({"event": "participant_events.join"}) is None
+    assert hand_event({}) is None
+
+
+# --------------------------------------------------------- async parity ---
+
+async def test_async_new_bot_methods():
+    client, calls = make_async_client({"body": {}})
+    await client.bots.get("b1")
+    await client.bots.stop_status("b1")
+    await client.bots.raise_hand("b1")
+    await client.bots.lower_hand("b1")
+    await client.bots.send_command("b1", "interrupt")
+    await client.bots.update_mia("b1", {"system_prompt": "x"}, wait_for_ack=True)
+    await client.bots.screenshots("b1", limit=5)
+    await client.bots.screenshot("b1", "s1")
+    await client.transcripts.get_by_bot("b1")
+    await client.google_logins.get("login-1")
+    await client.meeting_direct_connect.create({"zoom_rtms": {}})
+    await client.meeting_direct_connect.get("b1")
+    await client.meeting_direct_connect.leave("b1")
+    assert [_req(c) for c in calls] == [
+        ("GET", "/bots/b1", {}, None),
+        ("GET", "/bots/b1/stop_status", {}, None),
+        ("POST", "/bots/b1/send_command", {}, {"command": "raise_hand"}),
+        ("POST", "/bots/b1/send_command", {}, {"command": "lower_hand"}),
+        ("POST", "/bots/b1/send_command", {}, {"command": "interrupt"}),
+        ("POST", "/bots/b1/update_mia", {}, {"system_prompt": "x", "wait_for_ack": True}),
+        ("GET", "/bots/b1/screenshots", {"limit": "5"}, None),
+        ("GET", "/bots/b1/screenshots/s1", {}, None),
+        ("GET", "/bots/b1/get_transcript", {"raw": "false"}, None),
+        ("GET", "/google-logins/login-1", {}, None),
+        ("POST", "/meeting_direct_connect", {}, {"zoom_rtms": {}}),
+        ("GET", "/meeting_direct_connect/b1", {}, None),
+        ("POST", "/meeting_direct_connect/b1/leave", {}, {}),
+    ]
+    await client.aclose()
+
+
+async def test_async_calendar_routes_match_the_api():
+    client, calls = make_async_client({"body": {}})
+    await client.calendar.list(provider="outlook")
+    await client.calendar.disconnect({"purge_events": False})
+    await client.calendar.list_connections()
+    await client.calendar.get_connection("google", "a@acme.com")
+    await client.calendar.delete_connection("google", "a@acme.com")
+    assert [_req(c) for c in calls] == [
+        ("GET", "/calendar/calendars", {"provider": "outlook"}, None),
+        ("DELETE", "/calendar/disconnect", {"purge_events": "false"}, None),
+        ("GET", "/calendar/connections", {}, None),
+        ("GET", "/calendar/connections/google/a@acme.com", {}, None),
+        ("DELETE", "/calendar/connections/google/a@acme.com", {}, None),
+    ]
+    await client.aclose()
+
+
+async def test_async_remove_returns_202_body():
+    body = {"bot_id": "b1", "status": "graceful_exit_in_progress"}
+    client, _ = make_async_client({"status": 202, "body": body})
+    assert await client.bots.remove("b1") == body
+    await client.aclose()
+
+
+async def test_async_speaker_timeline_download():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if request.url.host == "files.example.com":
+            return httpx.Response(200, json=[{"name": "Sid"}])
+        return httpx.Response(200, json=TIMELINE_URL)
+
+    client = AsyncMeetStream("ms_test", max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert await client.bots.speaker_timeline("b1", download=True) == [{"name": "Sid"}]
+    assert "authorization" not in calls[1].headers
+    await client.aclose()
+
+
+async def test_async_429_retry_honours_retry_after(monkeypatch):
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    client, calls = make_async_client(
+        [{"status": 429, "body": {"message": "slow"}, "headers": {"Retry-After": "4"}}, {"body": {"ok": True}}],
+        max_retries=2,
+    )
+    assert (await client.bots.status("b1"))["ok"] is True
+    assert slept == [4.0] and len(calls) == 2
+    await client.aclose()
+
+
+async def test_async_deprecations_warn():
+    client, _ = make_async_client({"body": {}})
+    with pytest.warns(DeprecationWarning):
+        await client.bots.summary("b1")
+    with pytest.warns(DeprecationWarning):
+        await client.calendar.toggle_recurrence()
+    with pytest.warns(DeprecationWarning):
+        await client.storage.get()
+    await client.aclose()
+

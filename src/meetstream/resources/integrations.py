@@ -1,8 +1,15 @@
 """Google and Teams signed-in bots, Zoom OAuth, and bring-your-own-bucket storage."""
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, Optional
 from urllib.parse import quote
+
+_STORAGE_GONE = (
+    "meetstream.storage is deprecated: the MeetStream API does not serve /admin/configs and these "
+    "calls return 404. Save storage destinations in the dashboard and pick one per bot with "
+    "storage_id on bots.create()."
+)
 
 
 def _p(value: str) -> str:
@@ -53,6 +60,9 @@ class GoogleLogins:
     def list(self, domain: Optional[str] = None, **kw: Any) -> Any:
         """List Google logins, optionally filtered to one registered ``domain``."""
         return self._t.get("/google-logins", **_with_domain(domain, kw))
+
+    def get(self, login_id: str, **kw: Any) -> Any:
+        return self._t.get(f"/google-logins/{_p(login_id)}", **kw)
 
     def update(self, login_id: str, params: Dict[str, Any], **kw: Any) -> Any:
         return self._t.patch(f"/google-logins/{_p(login_id)}", params, **kw)
@@ -157,6 +167,13 @@ class Zoom:
 class Storage:
     """Bring-your-own-bucket storage.
 
+    .. deprecated:: 1.3.0
+        The ``/admin/configs`` routes these methods call are not served by the
+        MeetStream API, so every call returns 404. Save storage destinations in
+        the dashboard (Integrations > Storage) and choose one per bot with
+        ``storage_id`` on ``bots.create``; omit it to use the workspace
+        default. Kept for backwards compatibility.
+
     Two things to know before enabling this. It stores cloud credentials on
     your MeetStream account, so use a dedicated IAM user scoped to one bucket,
     never a root key. And with ``access_mode="write_only"`` MeetStream writes to
@@ -170,12 +187,15 @@ class Storage:
         self._t = transport
 
     def set(self, params: Dict[str, Any], **kw: Any) -> Any:
+        warnings.warn(_STORAGE_GONE, DeprecationWarning, stacklevel=2)
         return self._t.put("/admin/configs", params, params={"config_type": "storage"}, **kw)
 
     def get(self, **kw: Any) -> Any:
+        warnings.warn(_STORAGE_GONE, DeprecationWarning, stacklevel=2)
         return self._t.get("/admin/configs", **kw)
 
     def delete(self, key_name: str = "aws", **kw: Any) -> Any:
+        warnings.warn(_STORAGE_GONE, DeprecationWarning, stacklevel=2)
         return self._t.delete("/admin/configs", params={"key_name": key_name}, **kw)
 
 
@@ -202,6 +222,9 @@ class AsyncGoogleLogins(GoogleLogins):
 
     async def list(self, domain: Optional[str] = None, **kw: Any) -> Any:
         return await self._t.get("/google-logins", **_with_domain(domain, kw))
+
+    async def get(self, login_id: str, **kw: Any) -> Any:
+        return await self._t.get(f"/google-logins/{_p(login_id)}", **kw)
 
     async def update(self, login_id: str, params: Dict[str, Any], **kw: Any) -> Any:
         return await self._t.patch(f"/google-logins/{_p(login_id)}", params, **kw)
@@ -267,10 +290,13 @@ class AsyncStorage(Storage):
     """Asynchronous storage-config operations."""
 
     async def set(self, params: Dict[str, Any], **kw: Any) -> Any:
+        warnings.warn(_STORAGE_GONE, DeprecationWarning, stacklevel=2)
         return await self._t.put("/admin/configs", params, params={"config_type": "storage"}, **kw)
 
     async def get(self, **kw: Any) -> Any:
+        warnings.warn(_STORAGE_GONE, DeprecationWarning, stacklevel=2)
         return await self._t.get("/admin/configs", **kw)
 
     async def delete(self, key_name: str = "aws", **kw: Any) -> Any:
+        warnings.warn(_STORAGE_GONE, DeprecationWarning, stacklevel=2)
         return await self._t.delete("/admin/configs", params={"key_name": key_name}, **kw)
