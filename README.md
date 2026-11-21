@@ -208,7 +208,7 @@ New `create` options, all optional:
 ```python
 meetstream.bots.create({
     "meeting_link": "https://zoom.us/j/123",
-    "zoom": {"use_own_app": False},      # True: require your Zoom app. False: never use it. Omit: automatic
+    "zoom": {"obf_url": "https://you.example.com/zoom/obf"},  # Zoom: join through your Zoom app with an OBF token
     "storage_id": "eu-archive",          # a storage destination saved in the dashboard
     "bot_camera_stream": {"websocket_url": "wss://you.example.com/signal"},   # your video on the bot's camera
     "automatic_leave": {"recording_permission_denied_timeout": 600},       # Zoom, 60-600
@@ -222,7 +222,7 @@ meetstream.bots.create({
 })
 ```
 
-Zoom needs no setup: with no Zoom app connected, the bot joins without one. On Google Meet and Teams, `video_layout` also accepts `"speaker_view_default"` and `"grid_view_default"` (the platform's own view).
+Zoom bots join through the customer's Zoom app (Meeting SDK) with an OBF token (on behalf of a user who is in the meeting, `zoom.obf_url`) or a ZAK token (a signed-in bot, `zoom.zak_url`), the way Zoom asks Meeting SDK apps to join since 2 March 2026. Setup: [Zoom Marketplace app setup](https://docs.meetstream.ai/guides/app-integrations/zoom-marketplace-app-setup) · [Zoom authenticated bots (ZAK and OBF)](https://docs.meetstream.ai/guides/app-integrations/zoom-authenticated-bots). On Google Meet and Teams, `video_layout` also accepts `"speaker_view_default"` and `"grid_view_default"` (the platform's own view).
 
 </details>
 
