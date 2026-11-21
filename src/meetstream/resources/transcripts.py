@@ -28,8 +28,11 @@ class Transcripts:
     def get(self, transcript_id: str, *, raw: bool = False, **kw: Any) -> Any:
         """Fetch a transcript by **transcript_id**, not bot_id.
 
-        Segments use a ``transcript`` field, not ``text``. Reading the wrong
-        field is the usual reason a transcript "looks empty".
+        Returns a list of segments. The speaker is ``participant.name`` and
+        the text is in ``words[].text`` (some providers also send flat
+        ``speaker`` / ``transcript`` fields). Read them with
+        :func:`meetstream.segment_speaker` and :func:`meetstream.segment_text`;
+        reading the wrong field is the usual reason a transcript "looks empty".
 
         Raises :class:`NotReadyError` on HTTP 202 (still processing) and
         :class:`TranscriptFailedError` on HTTP 422: the transcript failed and

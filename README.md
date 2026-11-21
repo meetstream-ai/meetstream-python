@@ -26,7 +26,7 @@ Pick a flow before you write code. Guide: [Integration paths](https://docs.meets
 |---|---|---|
 | **1. Recording only** (Bot API) | Send a bot to Zoom, Google Meet or Microsoft Teams. Get recordings, transcripts, participants, chat and webhooks after the call, or live data during the call. Start here unless you want an agent in the meeting. | Bot price |
 | **2. Agents in meetings, your own stack** (recommended first for an agent) | **2a. Bridge server:** the bot streams live audio to your server, and your server sends audio, chat and images back. You run your own speech-to-text, LLM and voice, hosted or local. **2b. Your own agent as the brain:** Claude Code, Codex, Hermes, OpenClaw and others answer through `model.provider: "local_agent"` and the Agent Kit. | 2a: bot price only. 2b: bot price + $0.25 agent infrastructure. MeetStream charges no model tokens in either. |
-| **3. Managed agent infrastructure** (Agents API) | MeetStream hosts the voice agent (API name: MIA). **3a.** MeetStream's inbuilt keys (OpenAI and Deepgram today). **3b.** Your own provider keys. | Bot price + $0.25 agent infrastructure + the models you pick |
+| **3. Managed agent infrastructure** (Agents API) | MeetStream hosts the voice agent (API name: MIA). **3a.** MeetStream's inbuilt keys. Pipeline: OpenAI + Deepgram (Deepgram speech-to-text; OpenAI LLM and voice). Realtime: OpenAI only. Any other provider: bring your own key. **3b.** Your own provider keys. | Bot price + $0.25 agent infrastructure + the models you pick |
 
 Bot price: $0.35 per recording hour ($0.25 at volume). The MeetStream transcription add-on is $0.10 per hour; it is waived when you use your own provider key. See [pricing](https://meetstream.ai/pricing).
 
@@ -130,7 +130,7 @@ agent = meetstream.mia.create({
 meetstream.bots.create({"meeting_link": meeting_link, "agent_config_id": agent["agent_config_id"]})
 ```
 
-- **3a. MeetStream's inbuilt keys.** Set `"key_source": "meetstream"` on each pipeline section (`transcriber`, `model`, `voice`), with no `api_key`. Pipeline mode only. Inbuilt keys cover OpenAI (LLM, speech and voice models) and Deepgram (speech-to-text) today; for any other provider, add your own keys.
+- **3a. MeetStream's inbuilt keys.** Set `"key_source": "meetstream"` on each pipeline section (`transcriber`, `model`, `voice`), with no `api_key`. Inbuilt keys per mode: Pipeline: OpenAI + Deepgram (Deepgram speech-to-text; OpenAI LLM and voice). Realtime: OpenAI only. Any other provider: bring your own key.
 - **3b. Your own keys.** Add your provider keys (OpenAI, Anthropic, Deepgram, ElevenLabs and others in the docs) under Integrations, and pick any supported model. Use `"key_source": "user"` or leave it out. Your provider bills you for model usage.
 - **Price:** bot price + $0.25 agent infrastructure + the per-hour price of each model you pick (with 3b, your provider bills the models). The dashboard agent editor shows the rate before the bot runs. See [Voice agent pricing and keys](https://docs.meetstream.ai/guides/mia/pricing-and-keys) and the [MIA API guide](https://docs.meetstream.ai/guides/mia/mia-api-guide).
 
@@ -235,6 +235,15 @@ meetstream.transcripts.get_by_bot(bot_id)             # no transcript_id lookup 
 meetstream.transcripts.wait_for(transcript_id, timeout=900)
 meetstream.transcripts.list_for_bot(bot_id)
 meetstream.transcripts.transcribe_bot_audio(bot_id)   # rescue a streaming-only bot
+```
+
+Each segment names the speaker in `participant.name` and holds the text in `words[].text`:
+
+```python
+from meetstream import segment_speaker, segment_text
+
+for segment in meetstream.transcripts.get(transcript_id):
+    print(f"{segment_speaker(segment)}: {segment_text(segment)}")
 ```
 
 </details>

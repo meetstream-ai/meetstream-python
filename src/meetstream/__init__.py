@@ -3,7 +3,7 @@
 Send AI meeting bots into Zoom, Google Meet and Microsoft Teams. Record,
 transcribe, summarize and stream meetings, and run MIA voice agents.
 
-    from meetstream import MeetStream
+    from meetstream import MeetStream, segment_speaker, segment_text
 
     meetstream = MeetStream()  # reads MEETSTREAM_API_KEY
 
@@ -15,7 +15,8 @@ transcribe, summarize and stream meetings, and run MIA voice agents.
         },
     })
 
-    transcript = meetstream.transcripts.wait_for(bot["transcript_id"])
+    for segment in meetstream.transcripts.wait_for(bot["transcript_id"]):
+        print(segment_speaker(segment), segment_text(segment))
 
 Docs: https://docs.meetstream.ai
 """
@@ -68,6 +69,7 @@ from .resources import (
     Transcripts,
     Zoom,
 )
+from .transcript import segment_speaker, segment_start, segment_text
 from .webhooks import (
     PARTICIPANT_HAND_EVENTS,
     describe_stop,
@@ -78,7 +80,7 @@ from .webhooks import (
     verify_webhook_signature,
 )
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 __all__ = [
     "MeetStream", "AsyncMeetStream", "__version__", "DEFAULT_BASE_URL",
@@ -88,6 +90,7 @@ __all__ = [
     "is_inbuilt_keys_unavailable",
     "verify_webhook_signature", "parse_webhook", "is_terminal", "stop_reason", "describe_stop",
     "PARTICIPANT_HAND_EVENTS", "hand_event",
+    "segment_speaker", "segment_text", "segment_start",
 ]
 
 

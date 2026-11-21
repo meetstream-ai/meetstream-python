@@ -79,10 +79,11 @@ class Bots:
         explicitly requested; on Google Meet and Teams it needs
         ``video_required: True``.
 
-        Zoom needs no setup: with no Zoom app connected the bot joins without
-        one. ``"zoom": {"use_own_app": True}`` requires your connected Zoom app,
-        ``False`` never uses it (and cannot be combined with ``zak_url`` or
-        ``obf_url``).
+        Zoom bots join through your Zoom app (Meeting SDK) with an OBF token
+        (``"zoom": {"obf_url": ...}``, on behalf of a user who is in the
+        meeting) or a ZAK token (``"zoom": {"zak_url": ...}``, a signed-in
+        bot). Setup: https://docs.meetstream.ai/guides/app-integrations/zoom-marketplace-app-setup
+        and https://docs.meetstream.ai/guides/app-integrations/zoom-authenticated-bots.
 
         Other options: ``storage_id`` picks one of the storage destinations
         saved in the dashboard; ``bot_camera_stream`` (``{"websocket_url":
