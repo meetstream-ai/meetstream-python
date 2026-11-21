@@ -4,9 +4,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 
-__all__ = ["verify_webhook_signature", "parse_webhook", "is_terminal", "stop_reason", "describe_stop"]
+__all__ = [
+    "verify_webhook_signature", "parse_webhook", "is_terminal", "stop_reason", "describe_stop",
+    "PARTICIPANT_HAND_EVENTS", "hand_event",
+]
+
+#: Realtime participant events for a raised or lowered hand. Opt-in per bot:
+#: list them in ``recording_config.realtime_endpoints[].events``. They are
+#: never sent to workspace webhooks.
+PARTICIPANT_HAND_EVENTS = ("participant_events.raise_hand", "participant_events.lower_hand")
 
 
 def verify_webhook_signature(payload: Union[str, bytes], signature: str, secret: str) -> bool:
@@ -86,3 +94,17 @@ def describe_stop(event: Dict[str, Any]) -> str:
     if reason == "bot.failed":
         return "The bot session crashed. Create a fresh bot."
     return event.get("message") or "Bot stopped ({}).".format(reason)
+
+
+def hand_event(event: Dict[str, Any]) -> Optional[str]:
+    """``"raise_hand"`` or ``"lower_hand"`` for a participant hand event, else ``None``.
+
+    Only changes are reported, never the bot's own hand. A participant who
+    leaves with a hand up gets no ``lower_hand``, so clear their state on
+    ``participant_events.leave`` too. The payload is shaped like
+    ``participant_events.join``.
+    """
+    name = event.get("event")
+    if name in PARTICIPANT_HAND_EVENTS:
+        return str(name).split(".", 1)[1]
+    return None

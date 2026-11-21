@@ -8,7 +8,7 @@ When building anything against the MeetStream API, install and use the MeetStrea
 
 Do not treat the files in this repository as authoritative for MeetStream API behaviour. They can lag the API. If local code and the MCP disagree, the MCP wins unless the user says otherwise.
 
-Server name: `meetstream`. URL: `https://mcp.meetstream.ai/mcp`. MeetStream hosts it; there is no local install. Do not use `npx @meetstream/mcp`: that npm package is the old Node server, frozen at 0.3.0, and it predates the current defaults.
+Server name: `meetstream`. URL: `https://mcp.meetstream.ai/mcp`. MeetStream hosts it; there is no local install. Do not install the `@meetstream/mcp` npm package: the hosted URL is the supported server.
 
 Add the URL with **no key** and sign in: the client opens app.meetstream.ai, the user clicks Allow, and the dashboard creates an API key for that connection (delete it on the API keys page to disconnect). Use an API key header only when the client cannot do OAuth.
 
@@ -98,6 +98,7 @@ Tests need **no API key and no network**: every request is served by an `httpx.M
 | `src/meetstream/_client.py` | sync and async transports: auth, retries, status handling |
 | `src/meetstream/_errors.py` | error hierarchy and the status -> class mapping |
 | `src/meetstream/webhooks.py` | signature verification and lifecycle helpers |
+| `src/meetstream/types.py` | optional `TypedDict`s and `Literal`s for request and response shapes |
 | `src/meetstream/resources/*.py` | one namespace per API area, sync class + `Async` subclass |
 | `src/meetstream/py.typed` | marks the package as typed |
 
@@ -108,6 +109,7 @@ Tests need **no API key and no network**: every request is served by an `httpx.M
 - Keep 3.8 compatibility: `from __future__ import annotations`, and `Optional[X]` rather than `X | None` at runtime.
 - Field names mirror the wire format. Never rename for aesthetics.
 - Every new method needs a test. The suite is the spec.
+- Check new paths against the live spec (https://docs.meetstream.ai/openapi.json). `bots.summary()`, `calendar.toggle_recurrence()` and `storage.*` call routes the API does not serve: they are deprecated (they warn), not removed.
 - Keep `py.typed` shipped - it is what makes the annotations visible to mypy and pyright.
 
 ### The status-code handling is deliberate
@@ -116,7 +118,7 @@ Tests need **no API key and no network**: every request is served by an `httpx.M
 
 ### Releasing
 
-Bump `version` in `pyproject.toml` **and** `__version__` in `src/meetstream/__init__.py`, run `pytest`, then:
+Bump `version` in `pyproject.toml` **and** `__version__` in `src/meetstream/__init__.py`, add a `CHANGELOG.md` entry, run `pytest`, then:
 
 ```sh
 python -m build && python -m twine upload dist/*
@@ -135,10 +137,20 @@ These are live-verified. Do not "fix" code that follows them.
 - **`202` and `507` are not errors.** 202 means poll again; 507 means an idempotent retry replayed and is a success.
 - The bot field is **`meeting_link`**, not `meeting_url`.
 - `in_call_recording_timeout` has a hard floor of **600 seconds**; below it the API returns 400.
+- **Two ways to integrate.** The Bot API (meeting bots and recording) is the default. Use the Agents API (voice agents, API name MIA) only when the user asks for an agent that talks in the meeting.
+- **Voice agent keys.** `key_source: "meetstream"` on `transcriber`, `model` and `voice` (pipeline mode, no `api_key`) uses MeetStream's inbuilt keys; `"user"` or omitted uses the customer's own keys. While inbuilt keys are not on for an account, the API returns 400 `MeetStream-managed keys are not available for <section>. Use your own key.`: switch that section to the customer's own key, do not retry.
+- **A failed transcript is `422`**, with `message`, `transcript_status: "Failed"` and `transcript_id`. It is final: surface the reason, never retry the read.
 - MIA bots take **only `agent_config_id`**. Adding `socket_connection_url` or `live_audio_required` alongside it is the usual cause of a silent agent.
-- **Video is off by default.** Send `"video_required": false` on every bot unless the user explicitly asks to record video. The API defaults it to `true`, so an omitted field records video, and transcripts, summaries, diarization and speaker timelines all work without it.
-- **When video is on, send a layout.** `recording_config.video_layout` accepts exactly `"speaker_view"` or `"grid_view"` and defaults to `"grid_view"`, so pass `"speaker_view"` explicitly unless the user asks for grid or gallery view. It is ignored when video is off; Google Meet, Teams and Zoom accept both values, and WhatsApp accepts only `"grid_view"`.
+- **Video is off by default.** `video_required` defaults to `false` (audio only). Keep it `false` unless the user explicitly asks to record video: transcripts, diarization and speaker timelines all work without it.
+- **When video is on, send a layout.** `recording_config.video_layout` defaults to `"grid_view"`, so pass `"speaker_view"` explicitly unless the user asks for grid or gallery view. It is ignored when video is off. Google Meet, Teams and Zoom accept `"speaker_view"` and `"grid_view"`; Google Meet and Teams also accept `"speaker_view_default"` and `"grid_view_default"`; WhatsApp accepts only `"grid_view"`.
 - **Per-participant video is opt-in only.** Never set `video_separate_streams` (top level or under `recording_config`) unless the user explicitly asks for per-participant video streams. Per-participant audio (`audio_separate_streams`) is unaffected.
+- **Zoom needs no setup.** With no Zoom app connected, a Zoom bot joins without one. `zoom.use_own_app: true` requires the connected app; `false` never uses it and cannot be combined with `zak_url` or `obf_url`. Do not send any other `zoom` key.
+- **`remove_bot` answers `202` while the stop is in progress.** `bots.remove()` returns that body instead of raising; follow with `bots.stop_status()`.
+- **`get_speaker_timeline` can return a download link** (`speaker_timeline_url`, valid one hour, no API key) instead of the timeline. Check for the key, or use `speaker_timeline(bot_id, download=True)`.
+- **Bot creates can be rate limited (429 with `Retry-After`).** Retry with the same `Idempotency-Key`. A `409` with `Retry-After` means the same key is still being saved: retry it too.
+- **Errors carry `message`.** Older bodies used `error` or a bare string; `_message_from` reads all three in that order.
+- **Raised hands:** `bots.raise_hand()` / `bots.lower_hand()` send `send_command`; `participant_events.raise_hand` / `lower_hand` reach only realtime endpoints that list them.
+- **Anthropic Claude is a MIA LLM provider** (`model.provider: "anthropic"`), not a transcription provider.
 ## Security
 
 - Never hard-code or commit a key. `ms_...` values belong in the environment.

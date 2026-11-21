@@ -23,13 +23,20 @@ from ._errors import error_for_status
 
 DEFAULT_BASE_URL = "https://api.meetstream.ai/api/v1"
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
+# A Retry-After longer than this is not waited out inside a call: the error is
+# raised so the caller can decide (an hourly create limit can ask for ~1 hour).
+MAX_RETRY_AFTER = 60.0
 _USER_AGENT = "meetstream-python"
 
 
 def _message_from(body: Any, status: int) -> str:
-    """Pull out the API's own ``message``, falling back to something useful."""
+    """Pull out the API's own ``message``, falling back to something useful.
+
+    Current error bodies are ``{"message": ...}``. Older ones used ``error``
+    or a bare JSON string, so both are still read.
+    """
     if isinstance(body, Mapping):
-        for key in ("message", "detail", "error"):
+        for key in ("message", "error", "detail"):
             value = body.get(key)
             if isinstance(value, str) and value:
                 return value
@@ -52,6 +59,35 @@ def _backoff(attempt: int, retry_after: Optional[float]) -> float:
     if retry_after is not None:
         return retry_after
     return (2 ** attempt) * 0.5 + random.random() * 0.25
+
+
+def _retry_after_from(response: httpx.Response, body: Any) -> Optional[float]:
+    """Seconds to wait, from the ``Retry-After`` header or the body's ``retry_after``."""
+    raw: Any = response.headers.get("retry-after")
+    if not raw and isinstance(body, Mapping):
+        raw = body.get("retry_after")
+    if raw is None or raw == "" or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _should_retry(exc: MeetStreamError) -> bool:
+    """Retry 408, 429 and 5xx, and a 409 that asks for a retry.
+
+    A 409 with ``Retry-After`` means another request with the same idempotency
+    or deduplication key is still being saved; the same request (same key)
+    then gets the original bot. A wait longer than :data:`MAX_RETRY_AFTER` is
+    never slept through.
+    """
+    if exc.retry_after is not None and exc.retry_after > MAX_RETRY_AFTER:
+        return False
+    if exc.status in RETRYABLE:
+        return True
+    return exc.status == 409 and exc.retry_after is not None
 
 
 class BaseTransport:
@@ -111,19 +147,18 @@ class BaseTransport:
         if status != 202 and (response.is_success or status == 507):
             return parsed
 
-        retry_after_raw = response.headers.get("retry-after")
-        try:
-            retry_after = float(retry_after_raw) if retry_after_raw else None
-        except ValueError:
-            retry_after = None
-
         raise error_for_status(
             status,
             _message_from(parsed, status),
             body=parsed,
             request_id=response.headers.get("x-request-id"),
-            retry_after=retry_after,
+            retry_after=_retry_after_from(response, parsed),
         )
+
+    @staticmethod
+    def _check_presigned(url: str) -> None:
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise MeetStreamError("Expected an https:// download URL from the API, got: {!r}".format(url))
 
 
 class MeetStreamTransport(BaseTransport):
@@ -178,10 +213,10 @@ class MeetStreamTransport(BaseTransport):
             except MeetStreamError as exc:
                 # 202 is never retried here: the caller decides the polling
                 # cadence through the wait_for_* helpers.
-                if response.status_code not in RETRYABLE or attempt == retries:
+                if not _should_retry(exc) or attempt == retries:
                     raise
                 last_exc = exc
-                time.sleep(_backoff(attempt, getattr(exc, "retry_after", None)))
+                time.sleep(_backoff(attempt, exc.retry_after))
 
         raise last_exc or MeetStreamError("Request failed")
 
@@ -199,6 +234,19 @@ class MeetStreamTransport(BaseTransport):
 
     def delete(self, path: str, **kw: Any) -> Any:
         return self.request("DELETE", path, **kw)
+
+    def fetch_presigned(self, url: str, *, timeout: Optional[float] = None) -> Any:
+        """GET a pre-signed download URL returned by the API.
+
+        Sends no API key: the URL carries its own signature, and the key must
+        never go to a storage host.
+        """
+        self._check_presigned(url)
+        try:
+            response = self._client.get(url, timeout=timeout if timeout is not None else self.timeout)
+        except httpx.HTTPError as exc:
+            raise MSConnectionError("Could not download {}: {}".format(url.split("?", 1)[0], exc)) from exc
+        return self._handle(response)
 
     def close(self) -> None:
         if self._owns_client:
@@ -257,10 +305,10 @@ class AsyncMeetStreamTransport(BaseTransport):
             try:
                 return self._handle(response)
             except MeetStreamError as exc:
-                if response.status_code not in RETRYABLE or attempt == retries:
+                if not _should_retry(exc) or attempt == retries:
                     raise
                 last_exc = exc
-                await asyncio.sleep(_backoff(attempt, getattr(exc, "retry_after", None)))
+                await asyncio.sleep(_backoff(attempt, exc.retry_after))
 
         raise last_exc or MeetStreamError("Request failed")
 
@@ -278,6 +326,15 @@ class AsyncMeetStreamTransport(BaseTransport):
 
     async def delete(self, path: str, **kw: Any) -> Any:
         return await self.request("DELETE", path, **kw)
+
+    async def fetch_presigned(self, url: str, *, timeout: Optional[float] = None) -> Any:
+        """GET a pre-signed download URL returned by the API. Sends no API key."""
+        self._check_presigned(url)
+        try:
+            response = await self._client.get(url, timeout=timeout if timeout is not None else self.timeout)
+        except httpx.HTTPError as exc:
+            raise MSConnectionError("Could not download {}: {}".format(url.split("?", 1)[0], exc)) from exc
+        return self._handle(response)
 
     async def aclose(self) -> None:
         if self._owns_client:

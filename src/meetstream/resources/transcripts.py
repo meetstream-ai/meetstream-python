@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
-from .._errors import NotReadyError
+from .._errors import NotReadyError, TranscriptFailedError  # noqa: F401 - referenced in docstrings
 
 _STREAMING_HINT = (
     "Transcript {tid} was still not ready after {secs}s. If the bot used a streaming-only "
@@ -31,9 +31,21 @@ class Transcripts:
         Segments use a ``transcript`` field, not ``text``. Reading the wrong
         field is the usual reason a transcript "looks empty".
 
-        Raises :class:`NotReadyError` on HTTP 202.
+        Raises :class:`NotReadyError` on HTTP 202 (still processing) and
+        :class:`TranscriptFailedError` on HTTP 422: the transcript failed and
+        will not become ready. Read ``error.reason``, fix the cause, then call
+        :meth:`transcribe_bot_audio` for a new transcript.
         """
         return self._t.get(f"/transcript/{_p(transcript_id)}/get_transcript", params={"raw": raw}, **kw)
+
+    def get_by_bot(self, bot_id: str, *, raw: bool = False, **kw: Any) -> Any:
+        """Fetch the bot's first transcript by **bot_id**, with no transcript_id lookup.
+
+        Same response and errors as :meth:`get` (including
+        :class:`TranscriptFailedError` on 422). 409 means no transcript exists
+        (transcription was off, or the bot was never admitted).
+        """
+        return self._t.get(f"/bots/{_p(bot_id)}/get_transcript", params={"raw": raw}, **kw)
 
     def list_for_bot(self, bot_id: str, **kw: Any) -> Any:
         return self._t.get(f"/bots/{_p(bot_id)}/transcriptions", **kw)
@@ -51,7 +63,8 @@ class Transcripts:
         """Wait for a transcript. Always bounded.
 
         Never unbounded on purpose: streaming-only providers return 202 forever
-        because no post-call transcript will ever exist.
+        because no post-call transcript will ever exist. Stops at once with
+        :class:`TranscriptFailedError` when the transcript failed (422).
         """
         deadline = time.monotonic() + timeout
         while True:
@@ -70,6 +83,9 @@ class AsyncTranscripts(Transcripts):
 
     async def get(self, transcript_id: str, *, raw: bool = False, **kw: Any) -> Any:
         return await self._t.get(f"/transcript/{_p(transcript_id)}/get_transcript", params={"raw": raw}, **kw)
+
+    async def get_by_bot(self, bot_id: str, *, raw: bool = False, **kw: Any) -> Any:
+        return await self._t.get(f"/bots/{_p(bot_id)}/get_transcript", params={"raw": raw}, **kw)
 
     async def list_for_bot(self, bot_id: str, **kw: Any) -> Any:
         return await self._t.get(f"/bots/{_p(bot_id)}/transcriptions", **kw)

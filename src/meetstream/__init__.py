@@ -33,6 +33,7 @@ from ._client import (
 from ._errors import (
     AuthenticationError,
     BadRequestError,
+    BalanceUnavailableError,
     ConflictError,
     ConnectionError,
     MeetStreamError,
@@ -42,35 +43,51 @@ from ._errors import (
     RateLimitError,
     ServerError,
     TimeoutError,
+    TranscriptFailedError,
+    is_inbuilt_keys_unavailable,
 )
 from .resources import (
+    AsyncBilling,
     AsyncBots,
     AsyncCalendar,
     AsyncGoogleLogins,
+    AsyncMeetingDirectConnect,
     AsyncMia,
     AsyncStorage,
     AsyncTeamsLogins,
     AsyncTranscripts,
     AsyncZoom,
+    Billing,
     Bots,
     Calendar,
     GoogleLogins,
+    MeetingDirectConnect,
     Mia,
     Storage,
     TeamsLogins,
     Transcripts,
     Zoom,
 )
-from .webhooks import describe_stop, is_terminal, parse_webhook, stop_reason, verify_webhook_signature
+from .webhooks import (
+    PARTICIPANT_HAND_EVENTS,
+    describe_stop,
+    hand_event,
+    is_terminal,
+    parse_webhook,
+    stop_reason,
+    verify_webhook_signature,
+)
 
-__version__ = "1.2.1"
+__version__ = "1.4.0"
 
 __all__ = [
     "MeetStream", "AsyncMeetStream", "__version__", "DEFAULT_BASE_URL",
     "MeetStreamError", "ConnectionError", "TimeoutError", "BadRequestError",
     "AuthenticationError", "PermissionError", "NotFoundError", "ConflictError",
-    "RateLimitError", "ServerError", "NotReadyError",
+    "RateLimitError", "ServerError", "NotReadyError", "TranscriptFailedError", "BalanceUnavailableError",
+    "is_inbuilt_keys_unavailable",
     "verify_webhook_signature", "parse_webhook", "is_terminal", "stop_reason", "describe_stop",
+    "PARTICIPANT_HAND_EVENTS", "hand_event",
 ]
 
 
@@ -107,6 +124,8 @@ class MeetStream:
         self.teams_logins = TeamsLogins(self.http)
         self.zoom = Zoom(self.http)
         self.storage = Storage(self.http)
+        self.meeting_direct_connect = MeetingDirectConnect(self.http)
+        self.billing = Billing(self.http)
 
     def close(self) -> None:
         self.http.close()
@@ -147,6 +166,8 @@ class AsyncMeetStream:
         self.teams_logins = AsyncTeamsLogins(self.http)
         self.zoom = AsyncZoom(self.http)
         self.storage = AsyncStorage(self.http)
+        self.meeting_direct_connect = AsyncMeetingDirectConnect(self.http)
+        self.billing = AsyncBilling(self.http)
 
     async def aclose(self) -> None:
         await self.http.aclose()
