@@ -7,7 +7,7 @@ Annotate your own dicts with these to get editor completion and type checking:
 
     params: CreateBotParams = {
         "meeting_link": "https://zoom.us/j/123",
-        "zoom": {"use_own_app": False},
+        "zoom": {"obf_url": "https://your-server.example/zoom/obf"},
     }
     meetstream.bots.create(params)
 
@@ -28,7 +28,8 @@ __all__ = [
     "MiaModelConfig", "RateLimitBody",
     "KeySource", "LocalAgentAccess", "MiaLocalAgentConfig", "MiaTranscriberConfig", "MiaVoiceConfig",
     "MiaBuiltInTool", "MiaAgentOptions", "CreateMiaParams", "LocalAgentCheck", "BillingBalance",
-    "FailedTranscriptBody",
+    "FailedTranscriptBody", "TranscriptTimestamp", "TranscriptWord", "TranscriptParticipant",
+    "TranscriptSegment",
 ]
 
 VideoLayout = Literal["speaker_view", "grid_view", "speaker_view_default", "grid_view_default"]
@@ -77,10 +78,13 @@ HandCommand = Literal["raise_hand", "lower_hand"]
 class ZoomOptions(TypedDict, total=False):
     """``zoom`` on create_bot.
 
-    ``use_own_app``: ``True`` joins with your connected Zoom app (and needs
-    one); ``False`` joins with no Zoom app or credentials and cannot be
-    combined with ``zak_url`` or ``obf_url``; omitted or ``None`` uses your app
-    when one is connected and otherwise joins without one.
+    Zoom bots join through your Zoom app (Meeting SDK) with an OBF token
+    (``obf_url``, on behalf of a user who is in the meeting) or a ZAK token
+    (``zak_url``, a signed-in bot).
+
+    ``use_own_app`` is an API field: ``True`` requires your connected Zoom app
+    (400 without one); ``False`` cannot be combined with ``zak_url`` or
+    ``obf_url``; omitted or ``None`` uses your connected Zoom app.
     """
 
     use_own_app: Union[bool, None]
@@ -246,10 +250,11 @@ class UpdateMiaResponse(TypedDict, total=False):
 KeySource = Literal["meetstream", "user"]
 """``key_source`` on ``transcriber``, ``model`` and ``voice`` (pipeline mode).
 
-``"meetstream"``: MeetStream's inbuilt keys, with no ``api_key``. They cover
-OpenAI (LLM, speech and voice models) and Deepgram (speech-to-text) today. The
-per-hour price of the model you pick is added to the agent price; the
-dashboard agent editor shows the rate. While inbuilt keys are not on for your
+``"meetstream"``: MeetStream's inbuilt keys, with no ``api_key``. Pipeline mode
+only: inbuilt keys cover Deepgram (speech-to-text) and OpenAI (LLM and voice).
+Realtime mode runs on OpenAI and needs your own OpenAI key. Any other provider:
+bring your own key. The per-hour price of the model you pick is added to the
+agent price; the dashboard agent editor shows the rate. While inbuilt keys are not on for your
 account, the API answers 400 ``MeetStream-managed keys are not available for
 <section>. Use your own key.``: use your own key for that section.
 ``"user"`` (or omitted): your own provider key. See
@@ -385,6 +390,44 @@ class FailedTranscriptBody(TypedDict, total=False):
     message: str
     transcript_status: str
     transcript_id: str
+
+
+class TranscriptTimestamp(TypedDict, total=False):
+    relative: float
+    """Seconds from the start of the recording."""
+    absolute: Any
+
+
+class TranscriptWord(TypedDict, total=False):
+    """One entry of ``TranscriptSegment.words``: a token or a whole phrase."""
+
+    text: str
+    start_timestamp: TranscriptTimestamp
+    end_timestamp: TranscriptTimestamp
+
+
+class TranscriptParticipant(TypedDict, total=False):
+    id: Any
+    name: str
+    platform: str
+
+
+class TranscriptSegment(TypedDict, total=False):
+    """One item of the ``get_transcript`` list.
+
+    The speaker is ``participant.name`` and the text is ``words[].text``.
+    Some providers also send flat ``speaker`` / ``transcript`` fields.
+    :func:`meetstream.segment_text` and :func:`meetstream.segment_speaker`
+    read either shape.
+    """
+
+    participant: TranscriptParticipant
+    words: List[TranscriptWord]
+    language_code: str
+    speaker: str
+    transcript: str
+    start_time: float
+    end_time: float
 
 
 class RateLimitBody(TypedDict, total=False):

@@ -957,3 +957,42 @@ async def test_async_agents_balance_and_failed_transcript():
         await client.transcripts.get("t1")
     assert _body(calls[2]) == {"system_prompt": "x", "wait_for_ack": False}
     assert calls[1].url.params["check"] == "local_agent"
+
+
+# Live shape, captured from a `meetstream` provider transcript:
+# participant.name + words[].text, with no flat speaker/transcript field.
+LIVE_SEGMENTS = [
+    {
+        "participant": {"id": 100, "name": "Nav", "platform": "desktop"},
+        "words": [
+            {"text": "I'll", "start_timestamp": {"relative": 31.4, "absolute": 31.4},
+             "end_timestamp": {"relative": 31.6, "absolute": 31.6}},
+            {"text": "write the migration doc by Friday.", "start_timestamp": {"relative": 32.0, "absolute": 32.0},
+             "end_timestamp": {"relative": 34.0, "absolute": 34.0}},
+        ],
+        "language_code": "en",
+    },
+    {"participant": {"id": 101, "name": "", "platform": "desktop"}, "words": [{"text": ""}]},
+]
+
+
+def test_segment_helpers_read_the_live_shape():
+    from meetstream import segment_speaker, segment_start, segment_text
+
+    client, _ = make_client({"body": LIVE_SEGMENTS})
+    segments = client.transcripts.get("tr_1")
+    assert segment_speaker(segments[0]) == "Nav"
+    assert segment_text(segments[0]) == "I'll write the migration doc by Friday."
+    assert segment_start(segments[0]) == 31.4
+    assert segment_speaker(segments[1]) == "Unknown"
+    assert segment_text(segments[1]) == ""
+    assert segment_start({}) is None
+
+
+def test_segment_helpers_still_read_the_flat_shape():
+    from meetstream import segment_speaker, segment_start, segment_text
+
+    flat = {"speaker": "Alice", "transcript": "hello there", "start_time": 0}
+    assert segment_speaker(flat) == "Alice"
+    assert segment_text(flat) == "hello there"
+    assert segment_start(flat) == 0.0
