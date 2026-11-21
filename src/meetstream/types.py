@@ -26,6 +26,9 @@ __all__ = [
     "TranscriptProvider", "TranscriptConfig", "RealtimeEndpoint", "RecordingConfig", "CreateBotParams",
     "SpeakerTimelineDownload", "HandCommandResponse", "UpdateMiaParams", "UpdateMiaResponse",
     "MiaModelConfig", "RateLimitBody",
+    "KeySource", "LocalAgentAccess", "MiaLocalAgentConfig", "MiaTranscriberConfig", "MiaVoiceConfig",
+    "MiaBuiltInTool", "MiaAgentOptions", "CreateMiaParams", "LocalAgentCheck", "BillingBalance",
+    "FailedTranscriptBody",
 ]
 
 VideoLayout = Literal["speaker_view", "grid_view", "speaker_view_default", "grid_view_default"]
@@ -216,12 +219,17 @@ class HandCommandResponse(TypedDict, total=False):
 
 
 class UpdateMiaParams(TypedDict, total=False):
-    """Body of ``bots.update_mia``. Send at least one field."""
+    """Body of ``bots.update_mia`` / ``mia.update_live``. Send at least one field."""
 
     agent_config_params: Dict[str, Any]
+    """Up to 50 keys. Scalars only."""
     system_prompt: str
+    """Up to 32,000 characters."""
     wake_word_enabled: bool
     wake_words: List[str]
+    """Up to 10."""
+    wait_for_ack: bool
+    """Wait for the agent's result (``applied``, ``partially_applied``, ``failed``) instead of ``accepted``."""
 
 
 class UpdateMiaResponse(TypedDict, total=False):
@@ -235,22 +243,148 @@ class UpdateMiaResponse(TypedDict, total=False):
     ack_timeout: bool
 
 
+KeySource = Literal["meetstream", "user"]
+"""``key_source`` on ``transcriber``, ``model`` and ``voice`` (pipeline mode).
+
+``"meetstream"``: MeetStream's inbuilt keys, with no ``api_key``. They cover
+OpenAI (LLM, speech and voice models) and Deepgram (speech-to-text) today. The
+per-hour price of the model you pick is added to the agent price; the
+dashboard agent editor shows the rate. While inbuilt keys are not on for your
+account, the API answers 400 ``MeetStream-managed keys are not available for
+<section>. Use your own key.``: use your own key for that section.
+``"user"`` (or omitted): your own provider key. See
+https://docs.meetstream.ai/guides/mia/pricing-and-keys.
+"""
+
+LocalAgentAccess = Literal["readonly", "confirm", "full"]
+"""Access level of a local agent. ``readonly`` is the default."""
+
+MiaBuiltInTool = Union[Literal["current_time", "weather_now", "screen"], str]
+"""``agent.tools``. ``screen``: Google Meet, a vision-capable model."""
+
+
+class MiaLocalAgentConfig(TypedDict, total=False):
+    """``model.local_agent`` with ``model.provider: "local_agent"`` (pipeline mode).
+
+    Your agent (Claude Code, Codex, Hermes and others) runs through the
+    MeetStream Agent Kit on your own computer and subscription. Needs the local
+    agent feature on for your account. Meeting speech reaches an agent that can
+    use your computer: keep the lowest access level, keep the activation code
+    on, and keep the computer, agent and bridge on for the whole call. See
+    https://docs.meetstream.ai/guides/features/mia-screen-sharing-and-custom-agents.
+    """
+
+    url: str
+    """Public HTTPS address of your bridge. Required. Up to 300 characters."""
+    label: str
+    access: LocalAgentAccess
+    require_code: bool
+    owner_only: bool
+    owner_names: List[str]
+    owner_ids: List[str]
+    timeout_s: int
+    """10 to 600. Default 120."""
+
+
 class MiaModelConfig(TypedDict, total=False):
-    """``model`` in a MIA agent config.
+    """``model`` in an agent config.
 
     With ``provider: "anthropic"`` (pipeline mode), save your Anthropic key in
     the dashboard. ``tool_choice`` must be ``auto`` or ``none``, and ``top_p``,
     ``frequency_penalty``, ``presence_penalty`` and ``logit_bias`` are rejected.
+    With ``provider: "local_agent"``, send ``local_agent``; ``model`` and
+    ``system_prompt`` are optional.
     """
 
-    provider: Union[Literal["openai", "anthropic", "xai", "google"], str]
+    provider: Union[Literal["openai", "anthropic", "xai", "google", "local_agent"], str]
     model: str
+    key_source: KeySource
+    api_key: str
     system_prompt: str
     first_message: str
     temperature: float
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
     tool_choice: str
     max_tokens: int
+    local_agent: MiaLocalAgentConfig
+
+
+class MiaTranscriberConfig(TypedDict, total=False):
+    """``transcriber`` (speech-to-text). Pipeline mode."""
+
+    provider: str
+    model: str
+    language: str
+    """For example ``en`` (default) or ``es``. Unset, ``multi`` or ``auto`` = automatic detection."""
+    key_source: KeySource
+    api_key: str
+    boostwords: List[str]
+
+
+class MiaVoiceConfig(TypedDict, total=False):
+    """``voice`` (text-to-speech). Pipeline mode. ``provider`` and ``voice_id`` are required."""
+
+    provider: str
+    voice_id: str
+    model: str
+    speed: float
+    key_source: KeySource
+    api_key: str
+
+
+class MiaAgentOptions(TypedDict, total=False):
+    """``agent`` block of an agent config. Options from API v1.10.0 default to ``False``."""
+
+    tools: List[MiaBuiltInTool]
+    custom_functions: List[Dict[str, Any]]
+    mcp_servers: List[Dict[str, Any]]
+    mcp_fail_open: bool
+    desktop: bool
+    """Google Meet, with ``tools: ["screen"]``: present the bot's own desktop."""
+    chat_input: bool
+    """Chat messages that name the agent are requests; it answers in the chat."""
+    quiet_actions: bool
+    """Do the task without talking through each step."""
+    speak_only_when_asked: bool
+    """Act during the meeting, but speak only when addressed by name. Pipeline mode."""
+    enable_interruptions: bool
+
+
+class _CreateMiaRequired(TypedDict):
+    agent_name: str
+
+
+class CreateMiaParams(_CreateMiaRequired, total=False):
+    """Body of ``mia.create``."""
+
+    mode: Literal["pipeline", "realtime"]
+    model: MiaModelConfig
+    transcriber: MiaTranscriberConfig
+    voice: MiaVoiceConfig
+    agent: MiaAgentOptions
+    wake_word: Dict[str, Any]
+
+
+class LocalAgentCheck(TypedDict, total=False):
+    """Result of ``mia.check_local_agent``: ``{"local_agent": {"status": "ok", ...}}``."""
+
+    local_agent: Dict[str, Any]
+
+
+class BillingBalance(TypedDict):
+    """``billing.balance()``. ``balance_usd`` is a decimal string, or ``None`` for invoice accounts."""
+
+    customer_type: str
+    balance_usd: Union[str, None]
+    currency: str
+
+
+class FailedTranscriptBody(TypedDict, total=False):
+    """Body of a 422 from ``get_transcript``. Also on ``TranscriptFailedError.body``."""
+
+    message: str
+    transcript_status: str
+    transcript_id: str
 
 
 class RateLimitBody(TypedDict, total=False):

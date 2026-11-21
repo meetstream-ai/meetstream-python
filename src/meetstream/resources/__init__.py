@@ -1,3 +1,4 @@
+from .billing import AsyncBilling, Billing
 from .bots import AsyncBots, Bots
 from .calendar import AsyncCalendar, Calendar
 from .integrations import (
@@ -17,5 +18,5 @@ from .transcripts import AsyncTranscripts, Transcripts
 __all__ = [
     "Bots", "AsyncBots", "Transcripts", "AsyncTranscripts", "Calendar", "AsyncCalendar",
     "Mia", "AsyncMia", "GoogleLogins", "AsyncGoogleLogins", "TeamsLogins", "AsyncTeamsLogins", "Zoom", "AsyncZoom",
-    "Storage", "AsyncStorage", "MeetingDirectConnect", "AsyncMeetingDirectConnect",
+    "Storage", "AsyncStorage", "MeetingDirectConnect", "AsyncMeetingDirectConnect", "Billing", "AsyncBilling",
 ]

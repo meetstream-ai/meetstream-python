@@ -2,7 +2,7 @@
 
 # MeetStream SDK for Python
 
-**Send AI bots into Zoom, Google Meet and Microsoft Teams.** Record, transcribe, summarize and stream meetings, and run [MIA voice agents](#mia-voice-agents) that talk back.
+**Send AI bots into Zoom, Google Meet and Microsoft Teams.** Record, transcribe, summarize and stream meetings, and run [voice agents](#path-2-agents-api-voice-agents-fastest-path) that talk back.
 
 [![PyPI](https://img.shields.io/pypi/v/meetstream-sdk?style=flat-square&color=fd6316)](https://pypi.org/project/meetstream-sdk/)
 [![Python](https://img.shields.io/pypi/pyversions/meetstream-sdk?style=flat-square)](https://pypi.org/project/meetstream-sdk/)
@@ -18,30 +18,90 @@ pip install meetstream-sdk
 
 Python 3.8+. Sync and async. Ships type information.
 
-## Quickstart
+## Two ways to integrate
+
+MeetStream has two APIs. Pick one before you write code.
+
+1. **Bot API: meeting bots and recording.** Send a bot to Zoom, Google Meet or Microsoft Teams. Get recordings, transcripts, participants, chat and webhooks after the call, or live data during the call. Start here unless you want an agent that talks.
+2. **Agents API: voice agents in the meeting.** A voice agent (API name: MIA) rides on the bot. It hears the meeting and answers by voice, in the chat, or with tool calls.
+
+Guide: [Two ways to integrate](https://docs.meetstream.ai/guides/introduction/integration-paths).
+
+### Path 1: Bot API (fastest path)
+
+First decide: do you need notes **after the call** (post-call), or something **during the call** (live)?
+
+**Post-call:** create a bot, wait for webhooks, then read the transcript, recordings and participants.
 
 ```python
 from meetstream import MeetStream
 
 meetstream = MeetStream()  # reads MEETSTREAM_API_KEY
 
+# 1. Send the bot. Only meeting_link is required.
 bot = meetstream.bots.create({
     "meeting_link": "https://meet.google.com/abc-defg-hij",
     "bot_name": "Notetaker",
     "video_required": False,  # audio only (the API default); send True only when video is needed
+    "callback_url": "https://you.example.com/webhook",  # 2. lifecycle webhooks
     "recording_config": {
-        "transcript": {"provider": {"deepgram": {"model": "nova-3", "language": "en"}}}
+        "transcript": {"provider": {"meetstream": {"language": "auto"}}}  # no provider key needed
         # Recording video? Add "video_layout": "speaker_view" (the API defaults to grid_view).
     },
 })
 
-# Bounded wait - never spins forever, even on a streaming-only bot.
+# 3. Bounded wait for the transcript (also stops at once if it failed).
 transcript = meetstream.transcripts.wait_for(bot["transcript_id"])
+audio = meetstream.bots.audio(bot["bot_id"])
+people = meetstream.bots.participants(bot["bot_id"])
+```
+
+**Live:** use the live transcription webhook (`live_transcription_required` with a `*_streaming` provider), the real-time audio WebSocket (`live_audio_required`), the meeting control socket (`socket_connection_url`), chat (`bots.send_message`) and raise or lower hand (`bots.raise_hand` / `bots.lower_hand`, which is `POST /api/v1/bots/{bot_id}/send_command` with `{"command": "raise_hand"}`).
+
+```python
+meetstream.bots.create({
+    "meeting_link": "https://zoom.us/j/123456789",
+    "recording_config": {"transcript": {"provider": {"meetstream_streaming": {"transcription_mode": "sentence"}}}},
+    "live_transcription_required": {"webhook_url": "https://you.example.com/live"},
+})
+meetstream.bots.raise_hand(bot_id)  # the bot must be in the meeting (409 otherwise)
 ```
 
 Get a key at [app.meetstream.ai/api-key](https://app.meetstream.ai/api-key).
 
-### Async
+### Path 2: Agents API, voice agents (fastest path)
+
+1. Save an agent config. 2. Send a bot with its `agent_config_id`. Nothing else is needed on the bot.
+
+```python
+agent = meetstream.mia.create({
+    "agent_name": "Meeting assistant",
+    "mode": "pipeline",
+    "transcriber": {"provider": "deepgram", "model": "nova-3", "key_source": "meetstream"},
+    "model": {"provider": "openai", "model": "gpt-4.1", "key_source": "meetstream",
+              "system_prompt": "You are a helpful meeting assistant. Keep answers short.",
+              "first_message": "Hi, I'm an AI assistant on this call."},
+    "voice": {"provider": "openai", "voice_id": "coral", "key_source": "meetstream"},
+})
+
+meetstream.bots.create({"meeting_link": meeting_link, "agent_config_id": agent["agent_config_id"]})
+```
+
+### Voice agent setups and pricing
+
+| Setup | What you do | Price per meeting hour |
+|---|---|---|
+| **a. MeetStream's inbuilt keys** (default) | Pick the modules (speech-to-text, LLM, voice, or only the LLM) and the models. Set `"key_source": "meetstream"` on each pipeline section, with no `api_key`. No provider account needed. Inbuilt keys cover OpenAI (LLM, speech and voice models) and Deepgram (speech-to-text) today. | Bot price + $0.25 agent infrastructure + the per-hour price of each model you pick. The dashboard agent editor shows the rate before the bot runs. |
+| **b. Your own keys** | Add your provider keys (OpenAI, Anthropic, Deepgram, ElevenLabs and others in the docs) under Integrations, and pick any supported model. Use `"key_source": "user"` or leave it out. | Bot price + $0.25 agent infrastructure. Your provider bills you for model usage. |
+| **c. Your own agent** | Your agent (Claude Code, Codex, Hermes, OpenClaw and others) runs on your computer or your own subscription and writes what the voice agent says. Set `model.provider` to `"local_agent"` and run the [MeetStream Agent Kit](https://github.com/meetstream-ai/agent-kit) bridge. | Bot price + $0.25 agent infrastructure. MeetStream charges no model tokens for your agent's reasoning. |
+
+Bot price: $0.35 per recording hour ($0.25 at volume). The MeetStream transcription add-on is $0.10 per hour; it is waived when you use your own provider key. See [Voice agent pricing and keys](https://docs.meetstream.ai/guides/mia/pricing-and-keys) and [pricing](https://meetstream.ai/pricing).
+
+If inbuilt keys are not on for your account yet, the API answers `400` with `MeetStream-managed keys are not available for <section>. Use your own key.` Check with `is_inbuilt_keys_unavailable(e)`, then use your own key for that section (setup b). Do not retry the same request.
+
+Setup c is opt-in and needs the local agent feature on for your account (`mia.check_local_agent()` tells you whether the bridge is reachable). Meeting speech reaches an agent that has access to your computer and terminal, so a participant can try prompt injection: keep the lowest access level (`readonly` is the default) and the activation code on. Your computer, your agent and the bridge must stay on for the whole call. Guide: [MIA screen sharing and custom agents](https://docs.meetstream.ai/guides/features/mia-screen-sharing-and-custom-agents).
+
+## Async client
 
 ```python
 from meetstream import AsyncMeetStream
@@ -164,49 +224,79 @@ meetstream.calendar.enable_auto_schedule()
 </details>
 
 <details open>
-<summary><b>MIA voice agents</b></summary>
+<summary><b>Agents API (MIA voice agents)</b></summary>
 
 ```python
-agent = meetstream.mia.create({
-    "agent_name": "Meeting Assistant",
-    "mode": "pipeline",                    # or "realtime" for speech-to-speech
-    "model": {"provider": "openai", "model": "gpt-4.1",
-              "first_message": "Hi, I'm an AI assistant on this call."},
-    "voice": {"provider": "openai", "voice_id": "nova"},
-    "transcriber": {"provider": "deepgram", "model": "nova-3",
-                    "boostwords": ["Acme", "MeetStream"]},
-    "agent": {"tools": [], "mcp_servers": [], "enable_interruptions": True},
-    "wake_word": {"enabled": True, "words": ["hey acme"], "timeout": 30},
-})
+meetstream.mia.create(config)                     # returns agent_config_id
+meetstream.mia.get(agent_config_id)
+meetstream.mia.list()
+meetstream.mia.update(agent_config_id, {"agent": {"chat_input": True}})  # PUT: send whole blocks
+meetstream.mia.delete(agent_config_id)
+meetstream.mia.check_local_agent(agent_config_id) # {"local_agent": {"status": "ok", ...}}
 
 # Attach it with ONE field. Adding socket_connection_url or
 # live_audio_required alongside is the usual cause of a silent agent.
-meetstream.bots.create({
-    "meeting_link": meeting_link,
-    "agent_config_id": agent["agent_config_id"],
-})
+meetstream.bots.create({"meeting_link": meeting_link, "agent_config_id": agent_config_id,
+                        "agent_config_params": {"customer": "Ana"}})
+
+# Change a running agent. The saved config does not change.
+meetstream.mia.update_live(bot_id, {"system_prompt": "..."}, wait_for_ack=True)  # same as bots.update_mia
 ```
 
-`boostwords` fixes most "it mishears our company name" complaints, and `mcp_servers` is what turns a talking bot into one that can do work mid-call.
-
-Claude works as the LLM in pipeline mode. Save your Anthropic key in the dashboard, then:
+Agent options from API v1.10.0:
 
 ```python
 meetstream.mia.create({
-    "agent_name": "Claude assistant",
+    "agent_name": "Presenter",
     "mode": "pipeline",
-    "model": {"provider": "anthropic", "model": "claude-sonnet-5-5", "reasoning_effort": "low"},
-    # voice and transcriber as above
+    "transcriber": {"provider": "deepgram", "language": "es"},  # honoured; unset, "multi" or "auto" = detect
+    "model": {"provider": "openai", "model": "gpt-4.1"},        # a vision-capable model for "screen"
+    "voice": {"provider": "openai", "voice_id": "coral"},
+    "agent": {
+        "tools": ["screen"],            # Google Meet: present and work a live web page
+        "chat_input": True,             # chat messages that name the agent are requests
+        "quiet_actions": True,          # act without talking through each step
+        "speak_only_when_asked": True,  # speak only when addressed by name
+    },
 })
 ```
 
-Change a running agent mid-call (the saved config is not changed). With `wait_for_ack=True` the response says whether the agent applied it:
+Your own agent (setup c; needs the local agent feature on for your account):
 
 ```python
-meetstream.bots.update_mia(bot_id, {"agent_config_params": {"customer": "Acme"}}, wait_for_ack=True)
+mine = meetstream.mia.create({
+    "agent_name": "My Claude Code",
+    "mode": "pipeline",
+    "transcriber": {"provider": "deepgram"},
+    "voice": {"provider": "openai", "voice_id": "coral"},
+    "model": {"provider": "local_agent",
+              "local_agent": {"url": "https://your-tunnel.example.com", "access": "readonly", "require_code": True}},
+})
+check = meetstream.mia.check_local_agent(mine["agent_config_id"])
+if check["local_agent"]["status"] != "ok":
+    raise RuntimeError(f"Bridge not ready: {check['local_agent']['status']}")
 ```
 
-Secrets in `mia.list()` come back masked (`****` plus the last four characters). Sending a masked value back in `mia.update()` keeps the stored secret.
+Claude works as the LLM in pipeline mode with your Anthropic key: `"model": {"provider": "anthropic", "model": "claude-sonnet-5-5", "reasoning_effort": "low"}`.
+
+`boostwords` on the transcriber fixes most "it mishears our company name" complaints, and `mcp_servers` is what turns a talking bot into one that can do work mid-call. Secrets come back masked (`****` plus the last four characters); sending a masked value back in `mia.update()` keeps the stored secret.
+
+</details>
+
+<details open>
+<summary><b>Billing</b></summary>
+
+```python
+from meetstream import BalanceUnavailableError
+
+try:
+    balance = meetstream.billing.balance()  # GET /billing/balance, read only
+    print(balance["balance_usd"])           # decimal string such as "12.34", or None for invoice accounts
+except BalanceUnavailableError as e:
+    print("See your balance at", e.billing_url)
+```
+
+The balance endpoint is available when it is on for your account. Until then it answers `404`, which the SDK raises as `BalanceUnavailableError` (not retried). Top up at [app.meetstream.ai/billing](https://app.meetstream.ai/billing). A create with low credits returns `403` `Low credits please recharge`; do not retry it in a loop.
 
 </details>
 
@@ -282,12 +372,14 @@ def webhook():
 ## Errors
 
 ```python
-from meetstream import NotReadyError, RateLimitError, BadRequestError, MeetStreamError
+from meetstream import NotReadyError, TranscriptFailedError, RateLimitError, BadRequestError, MeetStreamError
 
 try:
     meetstream.transcripts.get(transcript_id)
 except NotReadyError:
     ...                                  # 202 - poll again
+except TranscriptFailedError as e:
+    print(e.status, e.transcript_status, e.reason)  # 422: final; fix the cause, then transcribe_bot_audio()
 except RateLimitError as e:
     time.sleep(e.retry_after or 5)       # from Retry-After; e.body has limit and window
 except BadRequestError as e:
@@ -296,7 +388,7 @@ except MeetStreamError as e:
     print(e.status, e.request_id)
 ```
 
-`e.message` reads the body's `message`, then `error`, then a bare string body. Prepaid accounts have a per-minute and per-hour limit on bot creates; over it the API answers 429 and creates no bot. Handle a failed transcript the same whether it answers 422 or 500.
+`e.message` reads the body's `message`, then `error`, then a bare string body. Prepaid accounts have a per-minute and per-hour limit on bot creates; over it the API answers 429 and creates no bot. A failed transcript answers `422` and raises `TranscriptFailedError` with `status`, `transcript_status`, `transcript_id` and `reason` (for example the provider rejected the API key, or a usage limit was reached). It is final and not retried: fix the cause, then call `transcripts.transcribe_bot_audio(bot_id)`.
 
 `AuthenticationError` (401) means the header never arrived. `PermissionError` (403) means the key itself was rejected. That distinction saves a lot of debugging.
 
@@ -326,7 +418,7 @@ meetstream.http.get("/some/new/endpoint")
 
 ## Typed
 
-The package ships `py.typed`, so mypy and pyright pick up its annotations with no stub package. `meetstream.types` has optional `TypedDict`s for request and response shapes (`CreateBotParams`, `ZoomOptions`, `MiaModelConfig`, `SpeakerTimelineDownload` and more). Methods still take and return plain dicts.
+The package ships `py.typed`, so mypy and pyright pick up its annotations with no stub package. `meetstream.types` has optional `TypedDict`s for request and response shapes (`CreateBotParams`, `ZoomOptions`, `CreateMiaParams`, `MiaModelConfig`, `KeySource`, `MiaLocalAgentConfig`, `BillingBalance`, `SpeakerTimelineDownload` and more). Methods still take and return plain dicts.
 
 ## Also available
 
@@ -337,8 +429,25 @@ The package ships `py.typed`, so mypy and pyright pick up its annotations with n
 | ⌨️ | **CLI** | [`@meetstream/cli`](https://www.npmjs.com/package/@meetstream/cli) |
 | 🧪 | **Labs** - runnable templates | [labs](https://github.com/meetstream-ai/labs) |
 
-## Links
+## What's new in 1.4.0
 
-[Documentation](https://docs.meetstream.ai) · [API reference](https://docs.meetstream.ai/api-reference/introduction) · [Errors](https://docs.meetstream.ai/errors) · [Webhooks](https://docs.meetstream.ai/guides/webhooks/webhooks-and-events) · [MIA](https://docs.meetstream.ai/guides/mia/create-an-agent) · [support@meetstream.ai](mailto:support@meetstream.ai)
+- **Agents API:** `mia.get`, `mia.check_local_agent`, `mia.update_live` (with `wait_for_ack`).
+- **Keys:** `key_source` (`"meetstream"` or `"user"`) on `transcriber`, `model` and `voice`, and `is_inbuilt_keys_unavailable(e)`.
+- **Your own agent:** `model.provider: "local_agent"` with `MiaLocalAgentConfig`.
+- **API v1.10.0 agent options:** `agent.tools` (`screen`), `agent.chat_input`, `agent.quiet_actions`, `agent.speak_only_when_asked`, `agent.desktop`, and `transcriber.language`.
+- **Failed transcripts:** a `422` from `get_transcript` raises `TranscriptFailedError` with `status`, `transcript_status` and `reason`.
+- **Billing:** `billing.balance()` for `GET /billing/balance`, available when the endpoint is on for your account; a `404` raises `BalanceUnavailableError`, which points to the billing page.
 
-MIT licensed.
+Full history: [CHANGELOG.md](CHANGELOG.md).
+
+## Latest docs
+
+- [Two ways to integrate](https://docs.meetstream.ai/guides/introduction/integration-paths)
+- [Create your first bot](https://docs.meetstream.ai/guides/get-started/create-your-first-bot) · [Create Bot payload reference](https://docs.meetstream.ai/api-reference/create-bot-payload-reference)
+- [Webhooks and events](https://docs.meetstream.ai/guides/webhooks/webhooks-and-events) · [Errors](https://docs.meetstream.ai/errors)
+- [MIA API guide](https://docs.meetstream.ai/guides/mia/mia-api-guide) · [Voice agent pricing and keys](https://docs.meetstream.ai/guides/mia/pricing-and-keys) · [MIA screen sharing and custom agents](https://docs.meetstream.ai/guides/features/mia-screen-sharing-and-custom-agents)
+- [SDKs](https://docs.meetstream.ai/build-with-ai/sdks) · [OpenAPI](https://docs.meetstream.ai/openapi.json)
+
+For the latest details, fetch the page with `.md` appended, read https://docs.meetstream.ai/llms.txt, or connect the docs MCP server at https://docs.meetstream.ai/_mcp/server. If this README and the docs differ, the docs are correct.
+
+Support: [support@meetstream.ai](mailto:support@meetstream.ai). MIT licensed.

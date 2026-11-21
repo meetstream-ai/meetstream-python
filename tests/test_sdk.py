@@ -16,6 +16,9 @@ from meetstream import (
     AsyncMeetStream,
     AuthenticationError,
     BadRequestError,
+    BalanceUnavailableError,
+    TranscriptFailedError,
+    is_inbuilt_keys_unavailable,
     ConflictError,
     MeetStream,
     MeetStreamError,
@@ -794,3 +797,163 @@ async def test_async_deprecations_warn():
         await client.storage.get()
     await client.aclose()
 
+
+
+# --------------------------------------------------------- 1.4.0: Agents API
+
+
+def _body(req):
+    return json.loads(req.content) if req.content else None
+
+
+def test_mia_get_fetches_one_config():
+    client, calls = make_client({"body": {"AgentConfigID": "a1"}})
+    assert client.mia.get("a1")["AgentConfigID"] == "a1"
+    assert calls[0].method == "GET"
+    assert calls[0].url.path == "/api/v1/mia"
+    assert calls[0].url.params["agent_config_id"] == "a1"
+
+
+def test_mia_create_sends_key_source_and_no_api_key():
+    client, calls = make_client({"status": 201, "body": {"agent_config_id": "a2"}})
+    out = client.mia.create({
+        "agent_name": "Inbuilt keys",
+        "mode": "pipeline",
+        "transcriber": {"provider": "deepgram", "language": "es", "key_source": "meetstream"},
+        "model": {"provider": "openai", "model": "gpt-4.1", "key_source": "meetstream"},
+        "voice": {"provider": "openai", "voice_id": "coral", "key_source": "meetstream"},
+    })
+    assert out["agent_config_id"] == "a2"
+    body = _body(calls[0])
+    assert [body[k]["key_source"] for k in ("transcriber", "model", "voice")] == ["meetstream"] * 3
+    assert body["transcriber"]["language"] == "es"
+    assert "api_key" not in body["model"]
+
+
+def test_mia_create_local_agent_and_v1_10_agent_options():
+    client, calls = make_client({"status": 201, "body": {"agent_config_id": "a3"}})
+    client.mia.create({
+        "agent_name": "Mine",
+        "mode": "pipeline",
+        "transcriber": {"provider": "deepgram", "key_source": "user"},
+        "voice": {"provider": "openai", "voice_id": "coral"},
+        "model": {"provider": "local_agent", "local_agent": {"url": "https://bridge.example.com", "access": "readonly"}},
+        "agent": {"tools": ["screen"], "chat_input": True, "quiet_actions": True, "speak_only_when_asked": True},
+    })
+    body = _body(calls[0])
+    assert body["model"] == {"provider": "local_agent", "local_agent": {"url": "https://bridge.example.com", "access": "readonly"}}
+    assert body["agent"] == {"tools": ["screen"], "chat_input": True, "quiet_actions": True, "speak_only_when_asked": True}
+
+
+def test_mia_check_local_agent():
+    client, calls = make_client({"body": {"local_agent": {"status": "ok", "latency_ms": 40}}})
+    assert client.mia.check_local_agent("a3")["local_agent"]["status"] == "ok"
+    assert calls[0].url.path == "/api/v1/mia"
+    assert dict(calls[0].url.params) == {"agent_config_id": "a3", "check": "local_agent"}
+
+
+def test_mia_update_live_posts_update_mia_with_wait_for_ack():
+    client, calls = make_client({"body": {"status": "partially_applied", "bot_id": "b1", "command": "update_mia"}})
+    out = client.mia.update_live("b1", {"wake_words": ["hey acme"]}, wait_for_ack=True)
+    assert out["status"] == "partially_applied"
+    assert calls[0].method == "POST"
+    assert calls[0].url.path == "/api/v1/bots/b1/update_mia"
+    assert _body(calls[0]) == {"wake_words": ["hey acme"], "wait_for_ack": True}
+
+
+def test_create_bot_with_agent_config_id_only():
+    client, calls = make_client({"status": 201, "body": {"bot_id": "b9"}})
+    client.bots.create({"meeting_link": "https://meet.google.com/a-b-c", "agent_config_id": "a1"})
+    body = _body(calls[0])
+    assert body["agent_config_id"] == "a1"
+    assert "socket_connection_url" not in body and "live_audio_required" not in body
+
+
+def test_inbuilt_keys_unavailable_is_detected():
+    client, _ = make_client({"status": 400, "body": {"message": "MeetStream-managed keys are not available for voice. Use your own key."}})
+    with pytest.raises(BadRequestError) as info:
+        client.mia.create({"agent_name": "x", "mode": "pipeline", "voice": {"provider": "openai", "key_source": "meetstream"}})
+    assert is_inbuilt_keys_unavailable(info.value)
+    assert not is_inbuilt_keys_unavailable(BadRequestError("API key not configured for: openai"))
+
+
+# ------------------------------------------------- 1.4.0: failed transcript
+
+FAILED = {
+    "message": "Transcript processing failed: provider authentication was rejected. Check the API key.",
+    "transcript_status": "Failed",
+    "transcript_id": "t1",
+}
+
+
+def test_422_failed_transcript_is_typed_and_not_retried():
+    client, calls = make_client({"status": 422, "body": FAILED}, max_retries=2)
+    with pytest.raises(TranscriptFailedError) as info:
+        client.transcripts.get("t1")
+    err = info.value
+    assert isinstance(err, MeetStreamError)
+    assert err.status == 422
+    assert err.transcript_status == "Failed"
+    assert err.transcript_id == "t1"
+    assert err.reason == "provider authentication was rejected. Check the API key."
+    assert len(calls) == 1
+
+
+def test_get_by_bot_and_wait_for_stop_on_failed_transcript():
+    client, calls = make_client({"status": 422, "body": FAILED})
+    with pytest.raises(TranscriptFailedError):
+        client.transcripts.get_by_bot("b1")
+    with pytest.raises(TranscriptFailedError):
+        client.transcripts.wait_for("t1", timeout=5, interval=0.01)
+    assert len(calls) == 2
+
+
+def test_422_without_transcript_status_is_plain_error():
+    client, _ = make_client({"status": 422, "body": {"message": "Unprocessable"}})
+    with pytest.raises(MeetStreamError) as info:
+        client.bots.status("b1")
+    assert not isinstance(info.value, TranscriptFailedError)
+
+
+# ----------------------------------------------------------- 1.4.0: billing
+
+
+def test_billing_balance_reads_the_route():
+    client, calls = make_client({"body": {"customer_type": "pay_as_you_go", "balance_usd": "12.34", "currency": "USD"}})
+    assert client.billing.balance()["balance_usd"] == "12.34"
+    assert calls[0].method == "GET"
+    assert calls[0].url.path == "/api/v1/billing/balance"
+
+
+def test_billing_balance_invoice_account_is_none():
+    client, _ = make_client({"body": {"customer_type": "invoice", "balance_usd": None, "currency": "USD"}})
+    assert client.billing.balance()["balance_usd"] is None
+
+
+def test_billing_balance_404_is_balance_unavailable_and_not_retried():
+    client, calls = make_client({"status": 404, "body": {"message": "Route not found"}}, max_retries=2)
+    with pytest.raises(BalanceUnavailableError) as info:
+        client.billing.balance()
+    assert isinstance(info.value, NotFoundError)
+    assert info.value.billing_url == "https://app.meetstream.ai/billing"
+    assert "app.meetstream.ai/billing" in info.value.message
+    assert len(calls) == 1
+
+
+async def test_async_agents_balance_and_failed_transcript():
+    client, calls = make_async_client([
+        {"body": {"AgentConfigID": "a1"}},
+        {"body": {"local_agent": {"status": "unreachable"}}},
+        {"body": {"status": "accepted", "bot_id": "b1", "command": "update_mia"}},
+        {"status": 404, "body": {"message": "Route not found"}},
+        {"status": 422, "body": FAILED},
+    ])
+    assert (await client.mia.get("a1"))["AgentConfigID"] == "a1"
+    assert (await client.mia.check_local_agent("a1"))["local_agent"]["status"] == "unreachable"
+    await client.mia.update_live("b1", {"system_prompt": "x"}, wait_for_ack=False)
+    with pytest.raises(BalanceUnavailableError):
+        await client.billing.balance()
+    with pytest.raises(TranscriptFailedError):
+        await client.transcripts.get("t1")
+    assert _body(calls[2]) == {"system_prompt": "x", "wait_for_ack": False}
+    assert calls[1].url.params["check"] == "local_agent"

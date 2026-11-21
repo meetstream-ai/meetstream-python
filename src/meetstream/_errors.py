@@ -11,8 +11,11 @@ from typing import Any, Dict, Optional
 __all__ = [
     "MeetStreamError", "ConnectionError", "TimeoutError", "BadRequestError",
     "AuthenticationError", "PermissionError", "NotFoundError", "ConflictError",
-    "RateLimitError", "ServerError", "NotReadyError", "error_for_status",
+    "RateLimitError", "ServerError", "NotReadyError", "TranscriptFailedError",
+    "BalanceUnavailableError", "is_inbuilt_keys_unavailable", "error_for_status",
 ]
+
+import re as _re
 
 
 class MeetStreamError(Exception):
@@ -96,6 +99,51 @@ class RateLimitError(MeetStreamError):
     """
 
 
+class TranscriptFailedError(MeetStreamError):
+    """422 from ``get_transcript`` - the transcript **failed** and will not become ready.
+
+    A final answer, not a server error: do not retry the same read. Read
+    ``reason`` (for example the provider rejected the API key, or a provider
+    usage limit was reached), fix the cause, then call
+    ``transcripts.transcribe_bot_audio()`` for a new transcript.
+
+    Docs: https://docs.meetstream.ai/errors#failed-transcript-422
+    """
+
+    def __init__(self, message: str, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        body = self.body if isinstance(self.body, dict) else {}
+        status = body.get("transcript_status")
+        #: The transcript status the API reported, normally ``"Failed"``.
+        self.transcript_status: str = status if isinstance(status, str) else "Failed"
+        tid = body.get("transcript_id")
+        #: The id of the failed transcript, when the API sent it.
+        self.transcript_id: Optional[str] = tid if isinstance(tid, str) else None
+        #: Why it failed, without the ``Transcript processing failed:`` prefix.
+        self.reason: str = _re.sub(r"^Transcript processing failed:?\s*", "", message, flags=_re.I) or message
+
+
+class BalanceUnavailableError(NotFoundError):
+    """404 from ``billing.balance()``: the balance endpoint is not on for this account yet.
+
+    Read the balance on https://app.meetstream.ai/billing. Do not retry.
+    """
+
+    billing_url = "https://app.meetstream.ai/billing"
+
+
+def is_inbuilt_keys_unavailable(error: Any) -> bool:
+    """True when the API refused MeetStream's inbuilt keys because they are not on for the account yet.
+
+    The message then reads, for example, ``MeetStream-managed keys are not
+    available for model. Use your own key.`` Use your own provider key for that
+    section (``key_source: "user"``, or leave it out) and continue. Do not
+    retry the same request.
+    """
+    message = error.message if isinstance(error, MeetStreamError) else str(error or "")
+    return bool(_re.search(r"MeetStream-managed keys are not available", message, flags=_re.I))
+
+
 class ServerError(MeetStreamError):
     """5xx - transient server error. Safe to retry with backoff."""
 
@@ -134,6 +182,8 @@ def error_for_status(
         return NotFoundError(message, **kwargs)
     if status == 409:
         return ConflictError(message, **kwargs)
+    if status == 422 and isinstance(body, dict) and isinstance(body.get("transcript_status"), str):
+        return TranscriptFailedError(message, **kwargs)
     if status == 429:
         return RateLimitError(message, **kwargs)
     if status >= 500:
