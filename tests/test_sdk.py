@@ -491,9 +491,11 @@ def test_screenshots_use_the_live_route_and_pass_paging_params():
 
 def test_summary_is_deprecated():
     client, calls = make_client({"body": {}})
-    with pytest.warns(DeprecationWarning, match="no summary endpoint"):
+    with pytest.warns(DeprecationWarning, match="no summary endpoint") as rec:
         client.bots.summary("b1")
     assert calls[0].url.path.endswith("/bots/b1/summary")
+    assert "get_transcript" in str(rec[0].message)
+    assert rec[0].filename == __file__
 
 
 def _timeline_client(api_body, file_body):
@@ -788,9 +790,10 @@ async def test_async_429_retry_honours_retry_after(monkeypatch):
 
 
 async def test_async_deprecations_warn():
-    client, _ = make_async_client({"body": {}})
-    with pytest.warns(DeprecationWarning):
+    client, calls = make_async_client({"body": {}})
+    with pytest.warns(DeprecationWarning, match="no summary endpoint"):
         await client.bots.summary("b1")
+    assert calls[0].url.path.endswith("/bots/b1/summary")
     with pytest.warns(DeprecationWarning):
         await client.calendar.toggle_recurrence()
     with pytest.warns(DeprecationWarning):

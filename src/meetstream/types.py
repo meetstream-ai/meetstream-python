@@ -271,16 +271,19 @@ MiaBuiltInTool = Union[Literal["current_time", "weather_now", "screen"], str]
 class MiaLocalAgentConfig(TypedDict, total=False):
     """``model.local_agent`` with ``model.provider: "local_agent"`` (pipeline mode).
 
-    Your agent (Claude Code, Codex, Hermes and others) runs through the
-    MeetStream Agent Kit on your own computer and subscription. Needs the local
-    agent feature on for your account. Meeting speech reaches an agent that can
+    Your own coding agent (Claude Code, Codex, Hermes and others) is MIA's
+    brain, on your own computer and subscription, through the ``meetstream``
+    CLI (``meetstream setup`` and ``meetstream agent serve``) over the
+    MeetStream relay. Coming soon. Needs the local agent feature on for your
+    account. Meeting speech reaches an agent that can
     use your computer: keep the lowest access level, keep the activation code
     on, and keep the computer, agent and bridge on for the whole call. See
     https://docs.meetstream.ai/guides/features/mia-screen-sharing-and-custom-agents.
     """
 
     url: str
-    """Public HTTPS address of your bridge. Required. Up to 300 characters."""
+    """Public HTTPS tunnel address of your local agent bridge, used by the legacy
+    tunnel transport. Required. Up to 300 characters."""
     label: str
     access: LocalAgentAccess
     require_code: bool

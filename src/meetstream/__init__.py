@@ -80,7 +80,7 @@ from .webhooks import (
     verify_webhook_signature,
 )
 
-__version__ = "1.4.3"
+__version__ = "1.4.4"
 
 __all__ = [
     "MeetStream", "AsyncMeetStream", "__version__", "DEFAULT_BASE_URL",
