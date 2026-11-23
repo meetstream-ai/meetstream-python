@@ -11,7 +11,9 @@ from .._errors import NotReadyError
 
 _SUMMARY_GONE = (
     "bots.summary() is deprecated: the MeetStream API has no summary endpoint and the call "
-    "returns 404. Build summaries from transcripts.get() or transcripts.get_by_bot()."
+    "returns 404. Fetch the transcript (transcripts.get_by_bot(bot_id), transcripts.get() with the "
+    "transcript_id from bots.detail(), or GET /bots/{bot_id}/get_transcript) and summarize it "
+    "with your own LLM."
 )
 
 
@@ -115,7 +117,14 @@ class Bots:
         return self._t.get(f"/bots/{_p(bot_id)}/detail", **kw)
 
     def summary(self, bot_id: str, **kw: Any) -> Any:
-        """Deprecated: the API has no summary endpoint, so this returns 404."""
+        """Deprecated: the API has no summary endpoint, so this returns 404.
+
+        ``GET /bots/{bot_id}/summary`` was removed. Fetch the transcript with
+        ``transcripts.get_by_bot(bot_id)`` (or ``transcripts.get()`` with the
+        ``transcript_id`` from ``bots.detail()``, or
+        ``GET /bots/{bot_id}/get_transcript``) and summarize it with your own
+        LLM. Kept so existing code still runs; emits ``DeprecationWarning``.
+        """
         warnings.warn(_SUMMARY_GONE, DeprecationWarning, stacklevel=2)
         return self._t.get(f"/bots/{_p(bot_id)}/summary", **kw)
 
@@ -310,6 +319,14 @@ class AsyncBots(Bots):
         return await self._t.get(f"/bots/{_p(bot_id)}/detail", **kw)
 
     async def summary(self, bot_id: str, **kw: Any) -> Any:
+        """Deprecated: the API has no summary endpoint, so this returns 404.
+
+        ``GET /bots/{bot_id}/summary`` was removed. Fetch the transcript with
+        ``transcripts.get_by_bot(bot_id)`` (or ``transcripts.get()`` with the
+        ``transcript_id`` from ``bots.detail()``, or
+        ``GET /bots/{bot_id}/get_transcript``) and summarize it with your own
+        LLM. Kept so existing code still runs; emits ``DeprecationWarning``.
+        """
         warnings.warn(_SUMMARY_GONE, DeprecationWarning, stacklevel=2)
         return await self._t.get(f"/bots/{_p(bot_id)}/summary", **kw)
 

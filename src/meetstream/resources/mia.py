@@ -13,8 +13,10 @@ MeetStream's inbuilt keys with ``"key_source": "meetstream"`` (no
 ``api_key``), or your own key (``"user"`` or omitted). While inbuilt keys are
 not on for your account, the API answers 400 and
 :func:`meetstream.is_inbuilt_keys_unavailable` is true: use your own key for
-that section. ``model.provider: "local_agent"`` runs your own agent through the
-MeetStream Agent Kit (needs the local agent feature on for your account). See
+that section. ``model.provider: "local_agent"`` runs your own coding agent as
+MIA's brain through the ``meetstream`` CLI (``meetstream setup`` and
+``meetstream agent serve``) over the MeetStream relay; coming soon (needs the
+local agent feature on for your account). See
 https://docs.meetstream.ai/guides/mia/pricing-and-keys and
 https://docs.meetstream.ai/guides/mia/mia-api-guide.
 
