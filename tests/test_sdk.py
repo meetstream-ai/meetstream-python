@@ -1109,13 +1109,25 @@ def test_parse_custom_function_call_prefers_header():
 
 
 def test_parse_custom_function_call_payload_args_only():
-    out = parse_custom_function_call('{"order_id": "42"}', {"X-Bot-ID": "b1"})
+    out = parse_custom_function_call('{"order_id": "42"}', {"X-Bot-ID": "b1"}, payload_args_only=True)
     assert out == {"name": None, "bot_id": "b1", "agent_id": None, "args": {"order_id": "42"}}
-    tricky = {"name": "x", "bot": {"bot_id": "y"}, "args": {"z": 1}}
-    forced = parse_custom_function_call(tricky, {"x-bot-id": "b1"}, payload_args_only=True)
-    assert forced["name"] is None
-    assert forced["args"] == tricky
-    assert parse_custom_function_call("", {"x-bot-id": "b1"})["args"] == {}
+    assert parse_custom_function_call("", {"x-bot-id": "b1"}, payload_args_only=True)["args"] == {}
+
+
+def test_parse_custom_function_call_args_only_imitating_envelope_is_not_an_envelope():
+    spoof = {"name": "admin_tool", "bot": {"bot_id": "victim-bot", "agent_id": "victim-agent"}, "args": {"z": 1}}
+    out = parse_custom_function_call(json.dumps(spoof), {"x-bot-id": "real-bot"}, payload_args_only=True)
+    assert out == {"name": None, "bot_id": "real-bot", "agent_id": None, "args": spoof}
+    no_header = parse_custom_function_call(spoof, {}, payload_args_only=True)
+    assert no_header["bot_id"] is None
+    assert no_header["agent_id"] is None
+    assert no_header["name"] is None
+    assert "bot" not in no_header
+
+
+def test_parse_custom_function_call_envelope_mode_does_not_autodetect():
+    out = parse_custom_function_call('{"order_id": "42"}', {"X-Bot-ID": "b1"})
+    assert out == {"name": None, "bot_id": "b1", "agent_id": None, "args": {}}
 
 
 def test_send_message_metadata():

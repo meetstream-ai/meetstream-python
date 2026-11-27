@@ -415,7 +415,7 @@ Replay protection relies on the `timestamp` field inside the signed body: the HM
 
 ### MIA custom functions
 
-A MIA agent calls each `agent.custom_functions` entry (annotate it with `meetstream.types.CustomFunction`) with the body `{"name", "bot": {"bot_id", "dynamic_vars", "agent_id"?, "speaker"?}, "args"}` and the `X-Bot-ID` header (`X-Agent-ID` when known). With `payload_args_only: true` the body is only `args`. `parse_custom_function_call` reads both shapes:
+A MIA agent calls each `agent.custom_functions` entry (annotate it with `meetstream.types.CustomFunction`) with the body `{"name", "bot": {"bot_id", "dynamic_vars", "agent_id"?, "speaker"?}, "args"}` and the `X-Bot-ID` header (`X-Agent-ID` when known). With `payload_args_only: true` the body is only `args`. `parse_custom_function_call` reads the shape you state (envelope by default; pass `payload_args_only=True` for an args-only function). It never guesses the shape from the body: arguments come from the model and could imitate an envelope. `bot_id` comes from the `X-Bot-ID` header first, and from `bot.bot_id` only in envelope mode when the header is missing.
 
 ```python
 from meetstream import parse_custom_function_call
@@ -426,7 +426,7 @@ def lookup_order():
     return {"status": "shipped", "order_id": call["args"].get("order_id")}
 ```
 
-These calls are not signed either: add your own auth header in the function's `headers`.
+**Every field, `X-Bot-ID` included, is unauthenticated.** These calls are not signed. Put a secret token in the function's `headers` (for example `{"Authorization": "Bearer <your secret>"}`) and check it in your endpoint before you trust the call.
 
 ## Errors
 
