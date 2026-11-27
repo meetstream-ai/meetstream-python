@@ -30,6 +30,9 @@ __all__ = [
     "MiaBuiltInTool", "MiaAgentOptions", "CreateMiaParams", "LocalAgentCheck", "BillingBalance",
     "FailedTranscriptBody", "TranscriptTimestamp", "TranscriptWord", "TranscriptParticipant",
     "TranscriptSegment",
+    "TranscriptionMode", "StreamingTranscriptionOptions", "LiveTranscriptPayload", "LiveCaption",
+    "LiveCaptionPayload", "CustomFunctionResponseVariable", "CustomFunction", "CustomFunctionCallBot",
+    "CustomFunctionCall",
 ]
 
 VideoLayout = Literal["speaker_view", "grid_view", "speaker_view_default", "grid_view_default"]
@@ -43,8 +46,26 @@ platform's own default view and are Google Meet and Teams only; Zoom accepts
 TranscriptionProvider = Literal[
     "deepgram", "deepgram_streaming", "assemblyai", "assemblyai_streaming", "jigsawstack",
     "sarvam", "meetstream", "meeting_captions", "smallest", "smallest_streaming",
+    "jigsawstack_streaming", "meetstream_streaming", "sarvam_streaming", "aws_transcribe",
 ]
-"""Keys of ``recording_config.transcript.provider``."""
+"""Keys of ``recording_config.transcript.provider``.
+
+The ``*_streaming`` keys and ``meeting_captions`` are live providers: they
+POST to ``live_transcription_required.webhook_url`` and make no post-call
+transcript.
+"""
+
+TranscriptionMode = Literal["raw", "sentence", "word_level"]
+"""``transcription_mode`` on a ``*_streaming`` provider.
+
+- ``raw`` (default): interim results (``is_final: False``), then the final one
+  (``is_final: True``; AssemblyAI marks it with ``end_of_turn``).
+- ``sentence``: finals only, each with ``end_of_turn: True``.
+- ``word_level``: one word per POST; ``transcript`` is the word and
+  ``utterance`` is ``""``.
+
+:func:`meetstream.is_final_segment` skips interim results in ``raw`` mode.
+"""
 
 RealtimeEvent = Union[
     Literal[
@@ -133,6 +154,19 @@ class SmallestStreamingOptions(TypedDict, total=False):
 
     model: Literal["pulse", "pulse-2"]
     language: str
+    transcription_mode: TranscriptionMode
+
+
+class StreamingTranscriptionOptions(TypedDict, total=False):
+    """Options shared by the ``*_streaming`` providers.
+
+    The provider keys stay typed as ``Dict[str, Any]`` so provider-specific
+    options keep working; annotate with this class when you only set these.
+    """
+
+    transcription_mode: TranscriptionMode
+    language: str
+    model: str
 
 
 class TranscriptProvider(TypedDict, total=False):
@@ -148,6 +182,10 @@ class TranscriptProvider(TypedDict, total=False):
     meeting_captions: Dict[str, Any]
     smallest: SmallestOptions
     smallest_streaming: SmallestStreamingOptions
+    jigsawstack_streaming: Dict[str, Any]
+    meetstream_streaming: Dict[str, Any]
+    sarvam_streaming: Dict[str, Any]
+    aws_transcribe: Dict[str, Any]
 
 
 class TranscriptConfig(TypedDict, total=False):
@@ -345,6 +383,7 @@ class MiaAgentOptions(TypedDict, total=False):
 
     tools: List[MiaBuiltInTool]
     custom_functions: List[Dict[str, Any]]
+    """Up to 20. Annotate each entry with :class:`CustomFunction`."""
     mcp_servers: List[Dict[str, Any]]
     mcp_fail_open: bool
     desktop: bool
@@ -441,3 +480,110 @@ class RateLimitBody(TypedDict, total=False):
     limit: int
     window: Literal["minute", "hour"]
     retry_after: int
+
+
+# live transcripts --------------------------------------------------------------
+
+class LiveTranscriptPayload(TypedDict, total=False):
+    """A live transcript POST from a ``*_streaming`` provider.
+
+    These POSTs are **not signed**: put a secret token in the webhook URL and
+    check it. ``meeting_captions`` uses :class:`LiveCaptionPayload` instead.
+    """
+
+    bot_id: str
+    speakerName: str
+    speakerId: str
+    timestamp: str
+    transcript: str
+    """The text. In ``word_level`` mode, the single word."""
+    utterance: str
+    """The utterance so far. ``""`` in ``word_level`` mode."""
+    words: List[Dict[str, Any]]
+    is_final: bool
+    """``raw`` mode: ``False`` on interim results, ``True`` on the final one."""
+    end_of_turn: bool
+    """``True`` when the speaker's turn ended (AssemblyAI finals, and every ``sentence`` POST)."""
+    turn_order: int
+    transcription_mode: Union[TranscriptionMode, str]
+
+
+class LiveCaption(TypedDict, total=False):
+    text: str
+    speakerName: str
+
+
+class LiveCaptionPayload(TypedDict, total=False):
+    """A live POST from the ``meeting_captions`` provider."""
+
+    type: Literal["caption"]
+    bot_id: str
+    caption: LiveCaption
+
+
+# custom functions ---------------------------------------------------------------
+
+class CustomFunctionResponseVariable(TypedDict):
+    name: str
+    path: str
+    """Dot notation, for example ``data.id``."""
+
+
+class _CustomFunctionRequired(TypedDict):
+    name: str
+    """Unique per agent."""
+    description: str
+    """Tells the model when to call the function. Up to 1024 characters."""
+    url: str
+    """Public HTTPS URL."""
+
+
+class CustomFunction(_CustomFunctionRequired, total=False):
+    """One entry of ``agent.custom_functions``: an HTTPS endpoint a MIA agent can call."""
+
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+    """Default ``POST``."""
+    headers: Dict[str, str]
+    query_params: Dict[str, Union[str, int, float, bool]]
+    """Flat object of scalar values."""
+    parameters: Dict[str, Any]
+    """JSON Schema object for the arguments."""
+    timeout_s: float
+    """1-120. Default 30."""
+    retries: int
+    """0-5. Default 2."""
+    response_cap_chars: int
+    """1000-50000. Default 15000."""
+    payload_args_only: bool
+    """Send only the arguments as the body, not the :class:`CustomFunctionCall` envelope."""
+    include_speaker_details: bool
+    speak_during_execution: bool
+    speak_after_execution: bool
+    speak_during_prompt: str
+    """What the agent says while the call runs. Up to 500 characters."""
+    response_variables: List[CustomFunctionResponseVariable]
+    """Save values from the response as dynamic variables. Up to 20."""
+
+
+class _CustomFunctionCallBotRequired(TypedDict):
+    bot_id: str
+
+
+class CustomFunctionCallBot(_CustomFunctionCallBotRequired, total=False):
+    dynamic_vars: Dict[str, Any]
+    agent_id: str
+    speaker: Any
+    """With ``include_speaker_details``."""
+
+
+class CustomFunctionCall(TypedDict):
+    """The body MIA sends to a :class:`CustomFunction` URL.
+
+    With ``payload_args_only`` the body is only ``args``. The request also
+    carries the ``X-Bot-ID`` header, and ``X-Agent-ID`` when known. Read either
+    shape with :func:`meetstream.parse_custom_function_call`.
+    """
+
+    name: str
+    bot: CustomFunctionCallBot
+    args: Dict[str, Any]

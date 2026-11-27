@@ -12,7 +12,11 @@ import httpx
 import pytest
 
 from meetstream import (
+    AGENT_ID_HEADER,
+    BOT_ID_HEADER,
     PARTICIPANT_HAND_EVENTS,
+    is_final_segment,
+    parse_custom_function_call,
     AsyncMeetStream,
     AuthenticationError,
     BadRequestError,
@@ -999,3 +1003,146 @@ def test_segment_helpers_still_read_the_flat_shape():
     assert segment_speaker(flat) == "Alice"
     assert segment_text(flat) == "hello there"
     assert segment_start(flat) == 0.0
+
+
+# MS-2488: SDK flow gaps ---------------------------------------------------------
+
+TS_NOW = 1795098600.0  # 2026-11-19T14:30:00Z
+
+
+def _signed(body):
+    raw = json.dumps(body)
+    return raw, hmac.new(SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
+
+
+def test_timestamp_tolerance_is_off_by_default():
+    assert verify_webhook_signature(BODY, SIG, SECRET) is True
+    assert verify_webhook_signature(BODY, SIG, SECRET, timestamp="not a date") is True
+
+
+def test_timestamp_tolerance_header_and_body_match_and_fresh_accepted():
+    raw, sig = _signed({"event": "bot.joining", "bot_id": "b1", "timestamp": "2026-11-19T14:28:00Z"})
+    kw = dict(timestamp="2026-11-19T14:28:00Z", tolerance_seconds=300, now=TS_NOW)
+    assert verify_webhook_signature(raw, "sha256=" + sig, SECRET, **kw) is True
+    assert verify_webhook_signature(raw.encode(), sig, SECRET, **kw) is True
+    assert parse_webhook(raw, sig, SECRET, **kw)["bot_id"] == "b1"
+    # Same instant, other ISO spelling.
+    assert verify_webhook_signature(raw, sig, SECRET, timestamp="2026-11-19T14:28:00.000+00:00",
+                                    tolerance_seconds=300, now=TS_NOW) is True
+    # No header: the signed body alone decides.
+    assert verify_webhook_signature(raw, sig, SECRET, tolerance_seconds=300, now=TS_NOW) is True
+    # Future timestamp inside the window (clock skew).
+    raw2, sig2 = _signed({"timestamp": "2026-11-19T14:31:00Z"})
+    assert verify_webhook_signature(raw2, sig2, SECRET, tolerance_seconds=300, now=TS_NOW) is True
+
+
+def test_timestamp_tolerance_replayed_old_body_with_fresh_header_rejected():
+    raw, sig = _signed({"event": "bot.joining", "timestamp": "2026-11-19T14:00:00Z"})
+    kw = dict(timestamp="2026-11-19T14:30:00Z", tolerance_seconds=300, now=TS_NOW)
+    assert verify_webhook_signature(raw, sig, SECRET, **kw) is False
+    with pytest.raises(ValueError):
+        parse_webhook(raw, sig, SECRET, **kw)
+    # Header matching the old body is still outside the window.
+    assert verify_webhook_signature(raw, sig, SECRET, timestamp="2026-11-19T14:00:00Z",
+                                    tolerance_seconds=300, now=TS_NOW) is False
+
+
+def test_timestamp_tolerance_header_differs_from_fresh_body_rejected():
+    raw, sig = _signed({"timestamp": "2026-11-19T14:29:00Z"})
+    assert verify_webhook_signature(raw, sig, SECRET, timestamp="2026-11-19T14:29:30Z",
+                                    tolerance_seconds=300, now=TS_NOW) is False
+    assert verify_webhook_signature(raw, sig, SECRET, timestamp="garbage",
+                                    tolerance_seconds=300, now=TS_NOW) is False
+
+
+def test_timestamp_tolerance_rejects_missing_or_bad_body_timestamp():
+    raw, sig = _signed({"event": "bot.joining"})
+    assert verify_webhook_signature(raw, sig, SECRET, timestamp="2026-11-19T14:30:00Z",
+                                    tolerance_seconds=300, now=TS_NOW) is False
+    raw, sig = _signed({"timestamp": 1763562600})
+    assert verify_webhook_signature(raw, sig, SECRET, tolerance_seconds=300, now=TS_NOW) is False
+    not_json = "not json"
+    sig = hmac.new(SECRET.encode(), not_json.encode(), hashlib.sha256).hexdigest()
+    assert verify_webhook_signature(not_json, sig, SECRET, tolerance_seconds=300, now=TS_NOW) is False
+    raw, _ = _signed({"timestamp": "2026-11-19T14:30:00Z"})
+    assert verify_webhook_signature(raw, "bad", SECRET, tolerance_seconds=300, now=TS_NOW) is False
+
+
+def test_is_final_segment():
+    base = {"bot_id": "b1", "speakerName": "Ada", "transcript": "hello"}
+    assert is_final_segment(dict(base, is_final=False)) is False
+    assert is_final_segment(dict(base)) is False
+    assert is_final_segment(dict(base, is_final=True)) is True
+    assert is_final_segment(dict(base, transcription_mode="raw", is_final=False)) is False
+    assert is_final_segment(dict(base, transcription_mode="raw", end_of_turn=True)) is True
+    assert is_final_segment(dict(base, transcription_mode="raw", end_of_turn=False)) is False
+    assert is_final_segment(dict(base, transcription_mode="sentence", end_of_turn=True)) is True
+    assert is_final_segment(dict(base, transcription_mode="sentence")) is True
+    assert is_final_segment(dict(base, transcription_mode="word_level", utterance="")) is True
+
+
+def test_custom_function_header_names():
+    assert BOT_ID_HEADER == "X-Bot-ID"
+    assert AGENT_ID_HEADER == "X-Agent-ID"
+
+
+def test_parse_custom_function_call_envelope():
+    body = {"name": "lookup_order", "bot": {"bot_id": "b1", "dynamic_vars": {"tier": "gold"}, "agent_id": "a1"},
+            "args": {"order_id": "42"}}
+    out = parse_custom_function_call(json.dumps(body), {"x-bot-id": "b1", "x-agent-id": "a1"})
+    assert out["name"] == "lookup_order"
+    assert out["bot_id"] == "b1"
+    assert out["agent_id"] == "a1"
+    assert out["args"] == {"order_id": "42"}
+    assert out["bot"]["dynamic_vars"] == {"tier": "gold"}
+    # bytes and dict bodies, no headers: falls back to the body's bot block
+    assert parse_custom_function_call(json.dumps(body).encode())["bot_id"] == "b1"
+    assert parse_custom_function_call(body)["agent_id"] == "a1"
+
+
+def test_parse_custom_function_call_prefers_header():
+    body = {"name": "f", "bot": {"bot_id": "from-body"}, "args": {}}
+    out = parse_custom_function_call(body, {"X-Bot-ID": "from-header"})
+    assert out["bot_id"] == "from-header"
+    assert out["agent_id"] is None
+    assert parse_custom_function_call(body, httpx.Headers({"x-bot-id": "hx"}))["bot_id"] == "hx"
+
+
+def test_parse_custom_function_call_payload_args_only():
+    out = parse_custom_function_call('{"order_id": "42"}', {"X-Bot-ID": "b1"})
+    assert out == {"name": None, "bot_id": "b1", "agent_id": None, "args": {"order_id": "42"}}
+    tricky = {"name": "x", "bot": {"bot_id": "y"}, "args": {"z": 1}}
+    forced = parse_custom_function_call(tricky, {"x-bot-id": "b1"}, payload_args_only=True)
+    assert forced["name"] is None
+    assert forced["args"] == tricky
+    assert parse_custom_function_call("", {"x-bot-id": "b1"})["args"] == {}
+
+
+def test_send_message_metadata():
+    client, calls = make_client({"body": {"status": "sent"}})
+    client.bots.send_message("b1", "hi")
+    client.bots.send_message("b1", "hi", metadata={"k": "v"})
+    assert json.loads(calls[0].content) == {"message": "hi"}
+    assert json.loads(calls[1].content) == {"message": "hi", "metadata": {"k": "v"}}
+
+
+def test_send_image_img_url_unchanged_and_base64_img():
+    client, calls = make_client({"body": {"status": "sent"}})
+    client.bots.send_image("b1", "https://x.example/a.png", 5)
+    client.bots.send_image("b1", img="aGVsbG8=", display_duration=3, metadata={"k": "v"})
+    assert json.loads(calls[0].content) == {"img_url": "https://x.example/a.png", "display_duration": 5}
+    assert json.loads(calls[1].content) == {"img": "aGVsbG8=", "display_duration": 3, "metadata": {"k": "v"}}
+    with pytest.raises(ValueError):
+        client.bots.send_image("b1")
+
+
+async def test_async_send_message_and_image_parity():
+    client, calls = make_async_client({"body": {"status": "sent"}})
+    await client.bots.send_message("b1", "hi", metadata={"k": "v"})
+    await client.bots.send_image("b1", img="aGVsbG8=", metadata={"k": "v"})
+    await client.bots.send_image("b1", "https://x.example/a.png")
+    assert json.loads(calls[0].content) == {"message": "hi", "metadata": {"k": "v"}}
+    assert json.loads(calls[1].content) == {"img": "aGVsbG8=", "metadata": {"k": "v"}}
+    assert json.loads(calls[2].content) == {"img_url": "https://x.example/a.png"}
+    with pytest.raises(ValueError):
+        await client.bots.send_image("b1")

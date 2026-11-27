@@ -39,6 +39,7 @@ First decide: do you need the transcript **after the call** (1a), or something *
 **1a. Non-realtime transcription (post-call):** create a bot, wait for webhooks, then read the transcript, recordings and participants.
 
 ```python
+import os
 from meetstream import MeetStream
 
 meetstream = MeetStream()  # reads MEETSTREAM_API_KEY
@@ -48,7 +49,7 @@ bot = meetstream.bots.create({
     "meeting_link": "https://meet.google.com/abc-defg-hij",
     "bot_name": "Notetaker",
     "video_required": False,  # audio only (the API default); send True only when video is needed
-    "callback_url": "https://you.example.com/webhook",  # 2. lifecycle webhooks
+    "callback_url": "https://you.example.com/webhook?token=" + os.environ["MEETSTREAM_WEBHOOK_SECRET"],  # 2. lifecycle webhooks (unsigned: check the token)
     "recording_config": {
         "transcript": {"provider": {"meetstream": {"language": "auto"}}}  # no provider key needed
         # Recording video? Add "video_layout": "speaker_view" (the API defaults to grid_view).
@@ -71,6 +72,8 @@ meetstream.bots.create({
 })
 meetstream.bots.raise_hand(bot_id)  # the bot must be in the meeting (409 otherwise)
 ```
+
+`transcription_mode` on a `*_streaming` provider is `raw` (the default: interim POSTs with `is_final: false`, then the final one), `sentence` (finals only) or `word_level` (one word per POST). Type the POST body with `meetstream.types.LiveTranscriptPayload` and keep only final text with `is_final_segment(payload)`. `meeting_captions` sends `LiveCaptionPayload` (`{"type": "caption", "bot_id", "caption": {"text", "speakerName"}}`) instead. Live transcript POSTs are not signed: protect the URL with a token (see [Webhooks](#webhooks)).
 
 Get a key at [app.meetstream.ai/api-key](https://app.meetstream.ai/api-key).
 
@@ -176,8 +179,9 @@ meetstream.bots.participants(bot_id)
 meetstream.bots.chats(bot_id)
 meetstream.bots.speaker_timeline(bot_id, download=True)   # follows the download link for large timelines
 
-meetstream.bots.send_message(bot_id, "Recording has started.")
+meetstream.bots.send_message(bot_id, "Recording has started.", metadata={"source": "app"})  # metadata optional
 meetstream.bots.send_image(bot_id, "https://…/slide.png", display_duration=5)
+meetstream.bots.send_image(bot_id, img=base64_png, display_duration=5)   # or base64, up to 5 MiB
 meetstream.bots.pause_recording(bot_id)     # privacy window
 meetstream.bots.resume_recording(bot_id)
 meetstream.bots.raise_hand(bot_id)          # Google Meet, Zoom, Teams; response has hand_raised
@@ -358,7 +362,26 @@ Teams setup (dedicated Microsoft 365 tenant, account requirements, errors): [Tea
 
 ## Webhooks
 
-Verify before you trust. Pass the **raw** body - re-serializing a parsed dict changes key order and the signature will never match.
+**Only workspace webhook endpoints are signed.** They carry `X-MeetStream-Signature: sha256=<hex HMAC-SHA256 of the raw body>` and `X-MeetStream-Timestamp` (an ISO 8601 UTC string, for example `2026-11-19T14:30:00Z`). Per-bot `callback_url` deliveries and live transcript POSTs (`live_transcription_required.webhook_url`) are **never signed**. Do not run `parse_webhook` on them: it rejects every delivery.
+
+**Per-bot `callback_url` and live URLs: put a secret token in the URL.**
+
+```python
+import hmac, os
+from flask import Flask, request
+
+SECRET = os.environ["MEETSTREAM_WEBHOOK_SECRET"]
+# bots.create({..., "callback_url": f"https://you.example.com/webhook?token={SECRET}"})
+
+@app.post("/webhook")
+def webhook():
+    if not hmac.compare_digest(request.args.get("token", ""), SECRET):
+        return "", 401
+    event = request.get_json()
+    return "", 200
+```
+
+**Workspace webhook endpoints: verify the signature.** Pass the **raw** body - re-serializing a parsed dict changes key order and the signature will never match.
 
 ```python
 from flask import Flask, request
@@ -373,6 +396,8 @@ def webhook():
             request.get_data(),                      # raw bytes, not request.json
             request.headers.get("X-MeetStream-Signature", ""),
             os.environ["WEBHOOK_SECRET"],
+            timestamp=request.headers.get("X-MeetStream-Timestamp"),  # must match the signed body's timestamp
+            tolerance_seconds=300,                   # optional replay window, off when not set
         )
     except ValueError:
         return "", 401
@@ -382,9 +407,26 @@ def webhook():
     return "", 200   # ack fast, process async
 ```
 
+Replay protection relies on the `timestamp` field inside the signed body: the HMAC covers the body, not the `X-MeetStream-Timestamp` header. With `tolerance_seconds` set, the delivery is rejected when the body's `timestamp` is missing or outside the window, or when the header is passed and does not match it.
+
 **Raised hands** arrive as `participant_events.raise_hand` and `participant_events.lower_hand`, only on the realtime endpoints that list them in `events` (never on workspace webhooks). `hand_event(event)` returns `"raise_hand"`, `"lower_hand"` or `None`.
 
 **Terminals are two-layer.** Every ending arrives once as `event: "bot.stopped"`, and `bot_event` says why: `bot.stopped`, `bot.kicked`, `bot.notallowed`, `bot.denied` or `bot.failed`. Not admitted, denied and failed carry `status_code: 500`. `stop_reason(event)` reads it for you (a kick and a clean exit both report `bot_status: "Stopped"`, so don't branch on that). `bot.error` is *not* terminal; the bot keeps running. `bot.done` is the final event on every path, streaming-only bots included. Every event carries a `timestamp`.
+
+### MIA custom functions
+
+A MIA agent calls each `agent.custom_functions` entry (annotate it with `meetstream.types.CustomFunction`) with the body `{"name", "bot": {"bot_id", "dynamic_vars", "agent_id"?, "speaker"?}, "args"}` and the `X-Bot-ID` header (`X-Agent-ID` when known). With `payload_args_only: true` the body is only `args`. `parse_custom_function_call` reads both shapes:
+
+```python
+from meetstream import parse_custom_function_call
+
+@app.post("/tools/lookup-order")
+def lookup_order():
+    call = parse_custom_function_call(request.get_data(), request.headers)
+    return {"status": "shipped", "order_id": call["args"].get("order_id")}
+```
+
+These calls are not signed either: add your own auth header in the function's `headers`.
 
 ## Errors
 
