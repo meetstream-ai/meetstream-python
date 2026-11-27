@@ -2,6 +2,20 @@
 
 All notable changes to `meetstream-sdk`.
 
+## 1.5.0 (2026-11-27)
+
+### Added
+
+- `verify_webhook_signature` and `parse_webhook` take optional keyword arguments `timestamp`, `tolerance_seconds` and `now`. With `tolerance_seconds` set, the delivery is rejected when the signed body's `timestamp` field (ISO 8601 UTC) is missing, cannot be parsed, or is outside the window, or when the `X-MeetStream-Timestamp` header is passed as `timestamp` and does not match it. The window uses the body because the HMAC covers the body, not the header. Off by default; existing calls are unchanged.
+- Live transcription types: `jigsawstack_streaming`, `meetstream_streaming`, `sarvam_streaming` and `aws_transcribe` in `TranscriptionProvider` and `TranscriptProvider`; `TranscriptionMode` (`raw` | `sentence` | `word_level`), `StreamingTranscriptionOptions`, `transcription_mode` on `SmallestStreamingOptions`; `LiveTranscriptPayload` and `LiveCaptionPayload` (`meeting_captions`).
+- `is_final_segment(payload)`: true for `sentence` and `word_level` POSTs and for `raw` POSTs with `is_final` or `end_of_turn` true; false for interim results.
+- MIA custom functions: `CustomFunction`, `CustomFunctionCall` and `CustomFunctionCallBot` types, `BOT_ID_HEADER` (`X-Bot-ID`) and `AGENT_ID_HEADER` (`X-Agent-ID`), and `parse_custom_function_call(body, headers, payload_args_only=False)`, which returns `{"name", "bot_id", "agent_id", "args"}`. The caller states the body shape (envelope by default); it is never guessed from the content. `bot_id` comes from `X-Bot-ID` first, and from `bot.bot_id` only in envelope mode. Every field, `X-Bot-ID` included, is unauthenticated unless the endpoint checks its own secret.
+- `bots.send_message(..., metadata=...)` and `bots.send_image(..., img=..., metadata=...)` (sync and async), matching the Node SDK. `img` is base64 (up to 5 MiB); `img_url` is now optional, but one of the two is required (`ValueError` otherwise). Existing calls send the same body as before.
+
+### Changed
+
+- README: only workspace webhook endpoints are signed. Per-bot `callback_url` deliveries and live transcript POSTs are never signed; the README shows the token-in-URL pattern (`MEETSTREAM_WEBHOOK_SECRET`) for them, the optional timestamp window, live `transcription_mode` with `is_final_segment`, and custom function calls.
+
 ## 1.4.4 (2026-11-23)
 
 ### Changed

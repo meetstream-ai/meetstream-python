@@ -37,6 +37,33 @@ def _command_body(command: str, params: Optional[Dict[str, Any]]) -> Dict[str, A
     return body
 
 
+def _message_body(message: str, metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"message": message}
+    if metadata is not None:
+        body["metadata"] = metadata
+    return body
+
+
+def _image_body(
+    img_url: Optional[str],
+    display_duration: Optional[int],
+    img: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not img_url and not img:
+        raise ValueError("send_image needs img_url (a public https URL) or img (base64)")
+    body: Dict[str, Any] = {}
+    if img_url:
+        body["img_url"] = img_url
+    if img:
+        body["img"] = img
+    if display_duration is not None:
+        body["display_duration"] = display_duration
+    if metadata is not None:
+        body["metadata"] = metadata
+    return body
+
+
 def _update_mia_body(params: Dict[str, Any], wait_for_ack: Optional[bool]) -> Dict[str, Any]:
     body = dict(params)
     if wait_for_ack is not None:
@@ -219,18 +246,30 @@ class Bots:
         return result
 
     # interaction -----------------------------------------------------------
-    def send_message(self, bot_id: str, message: str, **kw: Any) -> Any:
-        return self._t.post(f"/bots/{_p(bot_id)}/send_message", {"message": message}, **kw)
+    def send_message(
+        self, bot_id: str, message: str, *, metadata: Optional[Dict[str, Any]] = None, **kw: Any
+    ) -> Any:
+        """Post a chat message (1-2000 characters) as the bot, with optional ``metadata``."""
+        return self._t.post(f"/bots/{_p(bot_id)}/send_message", _message_body(message, metadata), **kw)
 
-    def send_image(self, bot_id: str, img_url: str, display_duration: Optional[int] = None, **kw: Any) -> Any:
-        """``img_url`` must be a public https URL, not base64.
+    def send_image(
+        self,
+        bot_id: str,
+        img_url: Optional[str] = None,
+        display_duration: Optional[int] = None,
+        *,
+        img: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kw: Any,
+    ) -> Any:
+        """Show an image as the bot's video for ``display_duration`` seconds (up to 300).
 
-        The bot downloads it, and every redirect hop must resolve to a public
-        address or the image is refused.
+        Send either ``img_url`` (a public https URL; animated GIFs work) or
+        ``img`` (base64, up to 5 MiB). If both are sent, the API uses
+        ``img_url``. The bot downloads ``img_url``, and every redirect hop must
+        resolve to a public address or the image is refused.
         """
-        body: Dict[str, Any] = {"img_url": img_url}
-        if display_duration is not None:
-            body["display_duration"] = display_duration
+        body = _image_body(img_url, display_duration, img, metadata)
         return self._t.post(f"/bots/{_p(bot_id)}/send_image", body, **kw)
 
     def pause_recording(self, bot_id: str, **kw: Any) -> Any:
@@ -393,13 +432,22 @@ class AsyncBots(Bots):
             return await self._t.fetch_presigned(url, timeout=kw.get("timeout"))
         return result
 
-    async def send_message(self, bot_id: str, message: str, **kw: Any) -> Any:
-        return await self._t.post(f"/bots/{_p(bot_id)}/send_message", {"message": message}, **kw)
+    async def send_message(
+        self, bot_id: str, message: str, *, metadata: Optional[Dict[str, Any]] = None, **kw: Any
+    ) -> Any:
+        return await self._t.post(f"/bots/{_p(bot_id)}/send_message", _message_body(message, metadata), **kw)
 
-    async def send_image(self, bot_id: str, img_url: str, display_duration: Optional[int] = None, **kw: Any) -> Any:
-        body: Dict[str, Any] = {"img_url": img_url}
-        if display_duration is not None:
-            body["display_duration"] = display_duration
+    async def send_image(
+        self,
+        bot_id: str,
+        img_url: Optional[str] = None,
+        display_duration: Optional[int] = None,
+        *,
+        img: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kw: Any,
+    ) -> Any:
+        body = _image_body(img_url, display_duration, img, metadata)
         return await self._t.post(f"/bots/{_p(bot_id)}/send_image", body, **kw)
 
     async def pause_recording(self, bot_id: str, **kw: Any) -> Any:

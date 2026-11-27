@@ -71,16 +71,20 @@ from .resources import (
 )
 from .transcript import segment_speaker, segment_start, segment_text
 from .webhooks import (
+    AGENT_ID_HEADER,
+    BOT_ID_HEADER,
     PARTICIPANT_HAND_EVENTS,
     describe_stop,
     hand_event,
+    is_final_segment,
     is_terminal,
+    parse_custom_function_call,
     parse_webhook,
     stop_reason,
     verify_webhook_signature,
 )
 
-__version__ = "1.4.4"
+__version__ = "1.5.0"
 
 __all__ = [
     "MeetStream", "AsyncMeetStream", "__version__", "DEFAULT_BASE_URL",
@@ -89,7 +93,8 @@ __all__ = [
     "RateLimitError", "ServerError", "NotReadyError", "TranscriptFailedError", "BalanceUnavailableError",
     "is_inbuilt_keys_unavailable",
     "verify_webhook_signature", "parse_webhook", "is_terminal", "stop_reason", "describe_stop",
-    "PARTICIPANT_HAND_EVENTS", "hand_event",
+    "PARTICIPANT_HAND_EVENTS", "hand_event", "is_final_segment",
+    "BOT_ID_HEADER", "AGENT_ID_HEADER", "parse_custom_function_call",
     "segment_speaker", "segment_text", "segment_start",
 ]
 
